@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jupytext-notebook-helper"
+version = "0.1.0"
+description = "Runtime helpers for jupytext-percent teaching notebooks: test mode + terminal image display"
+readme = "README.md"
+authors = [{ name = "Benjamin Piwowarski", email = "benjamin@piwowarski.fr" }]
+requires-python = ">=3.10"
+dependencies = [
+    # runtime helpers (imported in notebooks)
+    "imgcat>=0.5.0",
+    "matplotlib>=3.5",
+    "pillow>=9.0",
+    # build-time filter (jupytext-percent → student/teacher/colab notebooks)
+    "jupytext>=1.17",
+    "nbformat>=5.10",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["jupytext_notebook_helper"]
