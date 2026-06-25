@@ -358,6 +358,7 @@ def get_minimal_install_set(
     1. Filter imports to only those that exist in the lock file
     2. Remove packages that are transitively implied by others
     """
+
     # Step 1: Keep only packages that exist in the lock file.
     # Match using PEP 503 normalization (case-insensitive, runs of -_. -> -) so that
     # e.g. the import `impact_index` resolves to the lock entry `impact-index`
@@ -609,9 +610,9 @@ def process(  # noqa: C901
                         # Keep original line with markers in teacher mode
                         lines.append(line)
                     else:
-                        assert (
-                            assert_ix is not None
-                        ), f"[[assert]] en double line {lineno}"
+                        assert assert_ix is not None, (
+                            f"[[assert]] en double line {lineno}"
+                        )
                         lines[assert_ix] = None
                         assert_ix = None
                         lines.append(f"""{m.group(1)}{m.group(2)}\n"""[unindent:])

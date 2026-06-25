@@ -1,8 +1,9 @@
 import logging
 import re
-import tomllib
 from dataclasses import dataclass
 from functools import cache
+
+import tomllib
 
 
 @dataclass

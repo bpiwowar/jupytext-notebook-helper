@@ -1,14 +1,27 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "jupytext-notebook-helper"
-version = "0.1.0"
-description = "Runtime helpers for jupytext-percent teaching notebooks: test mode + terminal image display"
-readme = "README.md"
 authors = [{ name = "Benjamin Piwowarski", email = "benjamin@piwowarski.fr" }]
+description = "Runtime helpers + build tooling for jupytext-percent teaching notebooks: test mode, terminal image display, and student/teacher/colab generation"
+readme = "README.md"
+license = { text = "MIT" }
+keywords = ["jupyter", "jupytext", "teaching", "notebook"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Education",
+]
 requires-python = ">=3.10"
+dynamic = ["version"]
 dependencies = [
     # runtime helpers (imported in notebooks)
     "imgcat>=0.5.0",
@@ -19,5 +32,35 @@ dependencies = [
     "nbformat>=5.10",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.8",
+    "pre-commit>=3.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/bpiwowar/jupytext-notebook-helper"
+Repository = "https://github.com/bpiwowar/jupytext-notebook-helper"
+
+[tool.hatch.version]
+source = "vcs"
+
 [tool.hatch.build.targets.wheel]
 packages = ["jupytext_notebook_helper"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501",  # line length handled by the formatter
+    "E402",  # module-level import not at top (common in notebooks/filters)
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
