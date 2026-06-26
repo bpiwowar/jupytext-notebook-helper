@@ -471,20 +471,27 @@ def process(  # noqa: C901
 
             source = "# Installing required packages\n\n"
 
-            used_build_packages = False
-            for package, version in uv_info.build_packages.items():
-                if package not in PIP_EXCLUDE:
-                    used_build_packages = True
-                    source += f"%pip install {package}=={version}\n"
-
-            if used_build_packages:
+            # Collect each group into a single `%pip install a==1 b==2 ...`
+            # invocation rather than one line per package: faster (a single
+            # resolver pass) and easier to read.
+            build_specs = [
+                f"{package}=={version}"
+                for package, version in uv_info.build_packages.items()
+                if package not in PIP_EXCLUDE
+            ]
+            if build_specs:
+                source += "%pip install " + " ".join(build_specs) + "\n"
                 source += "\n# Installing main packages\n\n"
 
-            for package, version in uv_info.all_packages.items():
+            main_specs = [
+                f"{package}=={version}"
+                for package, version in uv_info.all_packages.items()
                 # Extract base package name (without extras like [cuda])
-                base_package = package.split("[")[0].lower()
-                if package not in PIP_EXCLUDE and base_package in minimal_packages:
-                    source += f"%pip install {package}=={version}\n"
+                if package not in PIP_EXCLUDE
+                and package.split("[")[0].lower() in minimal_packages
+            ]
+            if main_specs:
+                source += "%pip install " + " ".join(main_specs) + "\n"
 
             cell["source"] = source
             cells.append(cell)
