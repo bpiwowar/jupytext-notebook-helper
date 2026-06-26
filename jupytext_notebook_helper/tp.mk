@@ -13,6 +13,11 @@
 #                            -> $(TEACHER_DIR)/<name>.colab.ipynb   teacher . Colab
 #                            +  $(ZIP) = pyproject + uv.lock + local notebooks + README
 #
+# Optional `make solution` adds a student-facing corrigé (solutions kept, but no
+# instructor cells / [[...]] markers / tag comments):
+#   $(SOURCES_DIR)/<name>.py -> $(SOLUTION_DIR)/<name>.ipynb         solution . local
+#                            -> $(SOLUTION_DIR)/<name>.colab.ipynb   solution . Colab
+#
 # Cell-tag gating (in the sources): [[student]]..[[/student]] blanks solutions;
 # tags `teacher`, `colab`, `not-colab`, `pip` (empty cell -> pinned install).
 
@@ -20,6 +25,7 @@
 SOURCES_DIR    ?= sources
 DESTDIR_TP     ?= ../static/tp
 TEACHER_DIR    ?= teacher
+SOLUTION_DIR   ?= solution
 ROOT           ?= ..
 PYTHON         ?= uv run
 DEPDIR         ?= .deps
@@ -49,14 +55,18 @@ STUDENT_LOCAL := $(NAMES:%=$(DESTDIR_TP)/%.ipynb)
 STUDENT_COLAB := $(NAMES:%=$(DESTDIR_TP)/%.colab.ipynb)
 TEACHER_LOCAL := $(NAMES:%=$(TEACHER_DIR)/%.ipynb)
 TEACHER_COLAB := $(NAMES:%=$(TEACHER_DIR)/%.colab.ipynb)
+SOLUTION_LOCAL := $(NAMES:%=$(SOLUTION_DIR)/%.ipynb)
+SOLUTION_COLAB := $(NAMES:%=$(SOLUTION_DIR)/%.colab.ipynb)
 DEPFILES      := $(NAMES:%=$(DEPDIR)/%.d)
 TESTED        := $(NAMES:%=$(TESTED_DIR)/%.tested)
 
-.PHONY: help all notebooks teacher bundle check check-bundle show-tests clean
+.PHONY: help all notebooks teacher solution bundle check check-bundle show-tests clean
 help:
 	@echo "Practicals targets:"
 	@echo "  notebooks        student notebooks (local + Colab) + uv zip"
 	@echo "  teacher          teacher notebooks (local + Colab, with solutions)"
+	@echo "  solution         student-facing solution / corrigé (local + Colab, with"
+	@echo "                   solutions, no instructor cells/markers/tag comments)"
 	@echo "  bundle           the uv-ready student zip only"
 	@echo "  check-bundle     verify the zip resolves with uv (no install)"
 	@echo "  all              notebooks + teacher"
@@ -71,6 +81,7 @@ help:
 all: notebooks teacher
 notebooks: $(STUDENT_LOCAL) $(STUDENT_COLAB) $(ZIP)
 teacher: $(TEACHER_LOCAL) $(TEACHER_COLAB)
+solution: $(SOLUTION_LOCAL) $(SOLUTION_COLAB)
 bundle: $(ZIP)
 
 # student . Colab — colab+pip cells, no solutions, drop not-colab.
@@ -92,6 +103,17 @@ $(TEACHER_DIR)/%.colab.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
 $(TEACHER_DIR)/%.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
 	@mkdir -p $(TEACHER_DIR)
 	$(FILTER) --depdir $(DEPDIR) --teacher --exclude colab,pip $< > $@ || rm -f "$@"
+
+# solution (corrigé) . Colab — solutions kept, colab install, but no instructor
+# content: teacher-tagged cells dropped, no tag comments, no [[...]] markers.
+$(SOLUTION_DIR)/%.colab.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
+	@mkdir -p $(SOLUTION_DIR)
+	$(FILTER) --depdir $(DEPDIR) --solution --exclude teacher,not-colab $(PIP_ARGS) $< > $@ || rm -f "$@"
+
+# solution (corrigé) . local — solutions kept, no install cell, no instructor content.
+$(SOLUTION_DIR)/%.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
+	@mkdir -p $(SOLUTION_DIR)
+	$(FILTER) --depdir $(DEPDIR) --solution --exclude teacher,colab,pip $< > $@ || rm -f "$@"
 
 # Generated student env: union of the per-notebook package manifests (written by
 # the filter into $(DEPDIR)/<name>.pkgs while building the Colab variant) + a small
@@ -168,8 +190,8 @@ show-tests:
 	done
 
 clean:
-	@rm -rf $(TEACHER_DIR) $(DEPDIR) $(TESTED_DIR) $(BUNDLE_DIR) $(STUDENT_ENV_DIR) \
-		$(STUDENT_LOCAL) $(STUDENT_COLAB) $(ZIP)
+	@rm -rf $(TEACHER_DIR) $(SOLUTION_DIR) $(DEPDIR) $(TESTED_DIR) $(BUNDLE_DIR) \
+		$(STUDENT_ENV_DIR) $(STUDENT_LOCAL) $(STUDENT_COLAB) $(ZIP)
 
 # ---- bookkeeping ----
 # Auto-dependency files (for `copy`-marker includes) are written as a side effect

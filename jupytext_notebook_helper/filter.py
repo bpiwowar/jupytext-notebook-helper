@@ -133,6 +133,14 @@ parser.add_argument(
 parser.add_argument("--exclude", type=csv_list)
 parser.add_argument("--include", type=csv_list)
 parser.add_argument("--teacher", action="store_true", default=False)
+parser.add_argument(
+    "--solution",
+    action="store_true",
+    default=False,
+    help="student-facing solution ('corrigé'): keep the solutions but strip all "
+    "instructor debug info (cell-tag comments, [[student]]/[[remove]]/... markers, "
+    "instructor-only [[remove]] blocks)",
+)
 parser.add_argument("--depdir", type=Path, default=None)
 parser.add_argument(
     "--pip-exclude",
@@ -161,6 +169,10 @@ PIP_FORCE_INCLUDE |= set(args.pip_force_include or [])
 UV_ROOT = args.uv_root or "."
 
 teacher_mode = args.teacher
+solution_mode = args.solution
+assert not (teacher_mode and solution_mode), (
+    "--teacher and --solution are mutually exclusive"
+)
 
 base_dir = Path(Path(args.source).parent if args.source else ".").resolve()
 main_py = Path(args.source) if args.source else None
@@ -589,6 +601,11 @@ def process(  # noqa: C901
                     if teacher_mode:
                         # Keep original line with markers in teacher mode
                         lines.append(line)
+                    elif solution_mode:
+                        # Solution kept below: show the instruction as a comment when
+                        # there is one, but never leak a bare [[STUDENT]] placeholder.
+                        if m.group(2):
+                            lines.append(f"{student_space}# {m.group(2)}\n")
                     else:
                         # In student mode, show instructions as comment
                         lines.append(
@@ -606,6 +623,9 @@ def process(  # noqa: C901
                         # lines.append(f"""{student_space}# assert False,
                         # 'Not implemented yet'\n""")
                         lines.append(line[unindent:])
+                    elif solution_mode:
+                        # Solution kept (appended below); just drop the marker.
+                        pass
                     else:
                         lines.append(
                             f"""{student_space}assert False, 'Not implemented yet'\n"""
@@ -616,6 +636,9 @@ def process(  # noqa: C901
                     if teacher_mode:
                         # Keep original line with markers in teacher mode
                         lines.append(line)
+                    elif solution_mode:
+                        # Solution kept below; drop the [[assert]] instruction marker.
+                        pass
                     else:
                         assert assert_ix is not None, (
                             f"[[assert]] en double line {lineno}"
@@ -646,7 +669,13 @@ def process(  # noqa: C901
                 elif hide and (not teacher_mode) and re_hint.match(line) is not None:
                     lines.append(re_hint.sub(r"\1\2", line[unindent:]))
 
-                elif not (hide or remove) or teacher_mode:
+                elif (
+                    not (hide or remove)
+                    or teacher_mode
+                    # corrigé keeps the hidden solution body, but still drops
+                    # instructor-only [[remove]] blocks.
+                    or (solution_mode and not remove)
+                ):
                     lines.append(line[unindent:])
 
         assert not hide, (
