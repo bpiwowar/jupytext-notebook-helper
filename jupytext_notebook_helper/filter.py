@@ -44,6 +44,7 @@ from jupytext_notebook_helper.inlining import (
     Imports,
     InternalResolver,
     find_imports,
+    render_module_inclusion,
 )
 
 re_student_start = re.compile(
@@ -449,6 +450,22 @@ def rewrite_cell_imports(source: str, imports: Imports) -> str:
                 imp.end_lineno,
                 block_text.split("\n") if block_text else [],
             )
+        elif not imp.is_from and any(
+            resolver.is_internal(orig) for orig, _ in imp.names
+        ):
+            # `import mylib.my.module` for an internal module: include the whole
+            # module as a real module object so `mylib.my.module.foo()` works.
+            repl: List[str] = []
+            for orig, alias in imp.names:
+                if resolver.is_internal(orig):
+                    logging.info("Including internal module %s", orig)
+                    inc = resolver.resolve_module_import(orig)
+                    for ext in inc.external:
+                        imports.add(ext)
+                    repl.extend(render_module_inclusion(inc, orig, alias).split("\n"))
+                else:
+                    imports.add(f"import {Imports.alias(orig, alias)}")
+            plan[imp.lineno] = (imp.end_lineno, repl)
         else:
             imports.add(imp.source)
             plan[imp.lineno] = (imp.end_lineno, [])

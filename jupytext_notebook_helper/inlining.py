@@ -478,6 +478,67 @@ def _reconstruct_import(stmt: "_Stmt") -> str:
     return f"from {dots}{stmt.import_module or ''} import {spec}"
 
 
+def _py_string_literal(text: str) -> str:
+    """A triple-quoted literal whose value is ``text`` (line numbers preserved).
+
+    No leading newline is added, so ``compile(<literal value>, ...)`` keeps the
+    module's original line numbers. A trailing newline is ensured only to keep
+    the closing quote off the last content line (and avoid a stray trailing ``"``).
+    """
+    body = text.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
+    if not body.endswith("\n"):
+        body += "\n"
+    return '"""' + body + '"""'
+
+
+# Helper prelude embedded in every module-inclusion block. Self-contained so the
+# cell works even when re-run in isolation. `exec(compile(src, path, ...))` uses
+# the real source path, so tracebacks from the module body point at the true file.
+_MODULE_LOADER = """\
+import sys as _inline_sys
+import types as _inline_types
+
+
+def _inline_module(_name, _package, _path, _source):
+    _module = _inline_sys.modules.get(_name)
+    if _module is None:
+        _module = _inline_types.ModuleType(_name)
+        _inline_sys.modules[_name] = _module
+    if _path:
+        _module.__file__ = _path
+    if _package:
+        _module.__package__ = _package
+    _parent = _name.rpartition(".")[0]
+    if _parent:
+        _inline_module(_parent, _parent.rpartition(".")[0], "", None)
+        setattr(_inline_sys.modules[_parent], _name.rpartition(".")[2], _module)
+    if _source is None:
+        _module.__path__ = getattr(_module, "__path__", [])
+    else:
+        exec(compile(_source, _path, "exec"), _module.__dict__)
+    return _module"""
+
+
+def render_module_inclusion(inc: "ModuleInclusion", dotted: str, alias: str) -> str:
+    """Render the code that builds ``dotted`` as a real, importable module object.
+
+    ``import a.b.c`` binds ``a`` (dotted attribute access reaches ``a.b.c``);
+    ``import a.b.c as x`` binds ``x`` to the ``a.b.c`` module.
+    """
+    lines = [_MODULE_LOADER, ""]
+    for module in inc.modules:
+        lines.append(
+            f"_inline_module({module.dotted!r}, {module.package!r}, "
+            f"{module.path!r}, {_py_string_literal(module.source)})"
+        )
+    if alias == dotted:
+        top = dotted.split(".")[0]
+        lines.append(f"{top} = _inline_sys.modules[{top!r}]")
+    else:
+        lines.append(f"{alias} = _inline_sys.modules[{dotted!r}]")
+    return "\n".join(lines)
+
+
 @dataclass
 class ResolvedImport:
     blocks: List[ExtractedSymbol]  # new definitions to inline, in order

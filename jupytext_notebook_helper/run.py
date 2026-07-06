@@ -34,7 +34,12 @@ from typing import Dict, List, Optional, Tuple
 
 import jupytext
 
-from jupytext_notebook_helper.inlining import InternalResolver, find_imports
+from jupytext_notebook_helper.inlining import (
+    Imports,
+    InternalResolver,
+    find_imports,
+    render_module_inclusion,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,15 +108,34 @@ def _exec_cell(
     # precede use), and the import lines are blanked out of the cell body.
     pre_exec: List[Tuple[str, str, int]] = []
     for imp in parsed:
-        if not (imp.is_from and resolver.is_internal(imp.module, imp.level)):
+        if imp.is_from and resolver.is_internal(imp.module, imp.level):
+            result = resolver.resolve(imp.module, imp.names)
+            # External imports first: inlined blocks may use them at module level
+            # (e.g. `ActionT = TypeVar(...)`), not only inside function bodies.
+            for ext in result.external:
+                pre_exec.append((ext, _SYNTHETIC_EXTERNAL, 0))
+            for block in result.blocks:
+                pre_exec.append(
+                    (block.source, block.origin.path, block.origin.lineno - 1)
+                )
+        elif not imp.is_from and any(
+            resolver.is_internal(orig) for orig, _ in imp.names
+        ):
+            # `import mylib.my.module` -> build the whole module as a real object.
+            for orig, alias in imp.names:
+                if resolver.is_internal(orig):
+                    inc = resolver.resolve_module_import(orig)
+                    text = render_module_inclusion(inc, orig, alias)
+                    # The generated block compiles each module against its real
+                    # path, so module-body tracebacks stay accurate; the glue
+                    # itself gets a synthetic filename.
+                    pre_exec.append((text, f"<include {orig}>", 0))
+                else:
+                    pre_exec.append(
+                        (f"import {Imports.alias(orig, alias)}", _SYNTHETIC_EXTERNAL, 0)
+                    )
+        else:
             continue
-        result = resolver.resolve(imp.module, imp.names)
-        # External imports first: inlined blocks may use them at module level
-        # (e.g. `ActionT = TypeVar(...)`), not only inside function bodies.
-        for ext in result.external:
-            pre_exec.append((ext, _SYNTHETIC_EXTERNAL, 0))
-        for block in result.blocks:
-            pre_exec.append((block.source, block.origin.path, block.origin.lineno - 1))
         for ln in range(imp.lineno, imp.end_lineno + 1):
             lines[ln - 1] = ""
 

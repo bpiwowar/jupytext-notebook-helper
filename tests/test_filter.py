@@ -328,3 +328,40 @@ def test_pip_excluded_package_does_not_shadow_its_dependencies(tmp_path):
     )
     assert "numpy==2.0.0" in pip_source
     assert "proj" not in pip_source
+
+
+def test_full_module_inclusion_dotted_access(tmp_path):
+    _write_module(
+        tmp_path,
+        "mylib.my.module",
+        """
+        CONST = 7
+
+        def value():
+            return CONST
+        """,
+    )
+    src = tmp_path / "nb.py"
+    src.write_text(
+        textwrap.dedent(
+            """
+            # %%
+            import mylib.my.module
+
+            result = mylib.my.module.value()
+            """
+        ).lstrip()
+    )
+    nb = _run(["--src-root", str(tmp_path / "src")], src)
+    text = _text(nb)
+    # the module body travels inline...
+    assert "def value(" in text
+    assert "CONST = 7" in text
+    # ...and the dotted usage is preserved (not rewritten)
+    assert "result = mylib.my.module.value()" in text
+    assert "import mylib.my.module" not in text  # replaced by the inclusion block
+
+    # And the generated notebook actually runs with dotted access working.
+    ns = {}
+    exec("\n".join(_cell_source(c) for c in nb["cells"]), ns)
+    assert ns["result"] == 7

@@ -85,6 +85,22 @@ Use targeted imports (`from mylib import area, plot`) instead of
 modules become Makefile build dependencies, so notebooks rebuild when a library
 module changes.
 
+**Whole-module inclusion for dotted use.** When you want to keep interacting
+with a module by its dotted name, `import mylib.my.module` includes the **whole**
+module as a real module object, so `mylib.my.module.foo()` keeps working exactly
+like a normal import (no tree-shaking — the entire module, side effects and all,
+travels with the notebook; any internal modules it imports come along too):
+
+```python
+# %% in the notebook
+import mylib.my.module
+mylib.my.module.foo()      # dotted access preserved
+```
+
+Use `from mylib.my.module import foo` when you only want `foo` (tree-shaken, no
+side effects); use `import mylib.my.module` when you want the full module and
+dotted interaction.
+
 ## Testing: three levels
 
 - `make check` — runs each source **as a script**, importing internal helpers

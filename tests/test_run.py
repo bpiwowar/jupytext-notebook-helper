@@ -231,3 +231,53 @@ def test_run_inlines_decorated_classes(tmp_path):
     )
     ns = run_notebook(str(nb), src_root=str(tmp_path / "src"))
     assert ns["p"].y == 2
+
+
+def test_run_full_module_inclusion_dotted_use(tmp_path):
+    _write_module(
+        tmp_path,
+        "mylib.my.module",
+        """
+        import math
+
+        CONST = 3
+
+        def area(r):
+            return CONST * math.pi * r
+        """,
+    )
+    nb = _write_nb(
+        tmp_path,
+        """
+        # %%
+        import mylib.my.module
+        out = mylib.my.module.area(2)
+        """,
+    )
+    ns = run_notebook(str(nb), src_root=str(tmp_path / "src"))
+    assert ns["out"] == pytest.approx(3 * 3.141592653589793 * 2)
+
+
+def test_run_full_module_inclusion_traceback_at_source(tmp_path):
+    lib = _write_module(
+        tmp_path,
+        "pkg.mod",
+        """
+        def boom():
+            raise ValueError("boom")
+        """,
+    )
+    nb = _write_nb(
+        tmp_path,
+        """
+        # %%
+        import pkg.mod
+        pkg.mod.boom()
+        """,
+    )
+    with pytest.raises(ValueError) as exc_info:
+        run_notebook(str(nb), src_root=str(tmp_path / "src"))
+    frames = traceback.extract_tb(exc_info.value.__traceback__)
+    lib_frames = [f for f in frames if f.filename == str(lib)]
+    assert lib_frames, [f.filename for f in frames]
+    assert lib_frames[-1].lineno == 3  # the `raise` line

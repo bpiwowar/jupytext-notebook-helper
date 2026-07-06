@@ -1,5 +1,6 @@
 """Unit tests for the import-collection + internal-inlining core."""
 
+import math
 import textwrap
 
 import pytest
@@ -10,6 +11,7 @@ from jupytext_notebook_helper.inlining import (
     InternalResolver,
     ResolveError,
     find_imports,
+    render_module_inclusion,
 )
 
 # --------------------------------------------------------------------------- #
@@ -321,3 +323,92 @@ def test_resolver_origins_point_at_source(tmp_path):
     assert target.origin.path.endswith("lib.py")
     # `def target` is on line 4 of the dedented source (blank, CONST, blank, def)
     assert target.origin.lineno == 4
+
+
+# --------------------------------------------------------------------------- #
+# Full module inclusion (`import mylib.my.module`)
+# --------------------------------------------------------------------------- #
+
+
+def test_module_inclusion_builds_real_module(tmp_path):
+    resolver = _resolver_with(
+        tmp_path,
+        {
+            "mylib.my.module": """
+                import math
+
+                CONST = 3
+
+                def area(r):
+                    return CONST * math.pi * r
+            """,
+        },
+    )
+    inc = resolver.resolve_module_import("mylib.my.module")
+    assert inc.bind_name == "mylib"
+    assert [m.dotted for m in inc.modules] == ["mylib.my.module"]
+    assert "import math" in inc.external
+
+    code = render_module_inclusion(inc, "mylib.my.module", "mylib.my.module")
+    ns = {}
+    exec(code, ns)
+    # dotted attribute access works, just like a normal import
+    assert ns["mylib"].my.module.CONST == 3
+    assert ns["mylib"].my.module.area(1) == pytest.approx(3 * math.pi)
+
+
+def test_module_inclusion_nested_internal_deps_first(tmp_path):
+    resolver = _resolver_with(
+        tmp_path,
+        {
+            "top": """
+                from base import core
+
+                def feature(x):
+                    return core(x) + 1
+            """,
+            "base": """
+                BASE = 10
+
+                def core(x):
+                    return x * BASE
+            """,
+        },
+    )
+    inc = resolver.resolve_module_import("top")
+    # dependency (base) is included before the module that needs it (top)
+    assert [m.dotted for m in inc.modules] == ["base", "top"]
+
+    code = render_module_inclusion(inc, "top", "top")
+    ns = {}
+    exec(code, ns)
+    assert ns["top"].feature(3) == 31
+
+
+def test_module_inclusion_alias_binds_leaf(tmp_path):
+    resolver = _resolver_with(tmp_path, {"lib": "V = 5\n"})
+    inc = resolver.resolve_module_import("lib")
+    code = render_module_inclusion(inc, "lib", "L")
+    ns = {}
+    exec(code, ns)
+    assert ns["L"].V == 5
+
+
+def test_module_inclusion_dedup(tmp_path):
+    resolver = _resolver_with(tmp_path, {"lib": "V = 1\n"})
+    first = resolver.resolve_module_import("lib")
+    second = resolver.resolve_module_import("lib")
+    assert [m.dotted for m in first.modules] == ["lib"]
+    assert second.modules == []  # already included
+
+
+def test_module_inclusion_runs_side_effects(tmp_path):
+    # Unlike `from lib import x`, a full `import lib` runs the whole module.
+    resolver = _resolver_with(
+        tmp_path,
+        {"lib": "MARKER = []\nMARKER.append('ran')\n"},
+    )
+    inc = resolver.resolve_module_import("lib")
+    ns = {}
+    exec(render_module_inclusion(inc, "lib", "lib"), ns)
+    assert ns["lib"].MARKER == ["ran"]
