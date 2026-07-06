@@ -155,6 +155,32 @@ def test_internal_import_inlined_with_transitive_deps(tmp_path):
     assert "result = used()" in text
 
 
+def test_imports_inserted_before_first_code_cell_without_marker(tmp_path):
+    src = tmp_path / "nb.py"
+    src.write_text(
+        textwrap.dedent(
+            """
+            # %% [markdown]
+            # # Title
+
+            # %%
+            import numpy as np
+            x = np.zeros(3)
+            """
+        ).lstrip()
+    )
+    nb = _run([], src)
+    types = [c["cell_type"] for c in nb["cells"]]
+    # markdown title, then the inserted imports cell, then the (import-stripped) body
+    assert types[0] == "markdown"
+    assert types[1] == "code"
+    assert "import numpy as np" in _cell_source(nb["cells"][1])
+    body = _text(nb)
+    assert "x = np.zeros(3)" in body
+    # the import was moved out of its original cell
+    assert _cell_source(nb["cells"][2]).count("import numpy") == 0
+
+
 def test_star_import_of_internal_module(tmp_path):
     _write_module(
         tmp_path,

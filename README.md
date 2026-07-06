@@ -29,7 +29,8 @@ anymore (they still work but warn that they are redundant).
 **External imports are gathered automatically.** Write `import numpy as np`
 wherever it is convenient; every top-level import across all cells is collected,
 de-duplicated, and emitted in one place — the cell containing the
-`# [[imports]]` marker (still required, so you control where the block lands):
+`# [[imports]]` marker if you add one (to control where the block lands),
+otherwise a cell inserted just before the first code cell:
 
 ```python
 # %%

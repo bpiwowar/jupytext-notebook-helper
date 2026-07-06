@@ -775,7 +775,15 @@ if not imports.empty():
             cell["source"] = source
             break
 
-    assert count > 0, "No <# [[imports]]> found"
+    if count == 0:
+        # No explicit `# [[imports]]` marker: insert the gathered imports as a
+        # new code cell right before the first code cell.
+        insert_at = next(
+            (i for i, c in enumerate(document["cells"]) if c["cell_type"] == "code"),
+            len(document["cells"]),
+        )
+        import_cell = nbformat.v4.new_code_cell(source=imports.to_code().rstrip("\n"))
+        document["cells"].insert(insert_at, import_cell)
 
 jupytext.write(document, sys.stdout, fmt="ipynb")
 
