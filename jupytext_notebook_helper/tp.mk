@@ -28,8 +28,12 @@ TEACHER_DIR    ?= teacher
 SOLUTION_DIR   ?= solution
 ROOT           ?= ..
 PYTHON         ?= uv run
+# Directory holding the internal library modules that get inlined when a source
+# does `from <module> import <names>` (see the filter's --src-root).
+SRC_ROOT       ?= src
 DEPDIR         ?= .deps
 TESTED_DIR     ?= .tested
+RESOLVED_DIR   ?= .resolved
 BUNDLE_DIR     ?= .tp-bundle
 ZIP            ?= $(DESTDIR_TP)/tp-uv.zip
 STUDENT_README ?= $(SOURCES_DIR)/STUDENT_README.md
@@ -47,7 +51,8 @@ BUNDLE_LOCK           ?= $(STUDENT_ENV_DIR)/uv.lock
 # uv.lock/pyproject.toml live (relative to the build dir).
 PIP_ARGS       ?= --uv-root $(ROOT)
 
-FILTER := $(PYTHON) python -m jupytext_notebook_helper.filter
+FILTER := $(PYTHON) python -m jupytext_notebook_helper.filter --src-root $(SRC_ROOT)
+RUN    := $(PYTHON) python -m jupytext_notebook_helper.run --src-root $(SRC_ROOT)
 
 PY_NOTEBOOKS  := $(wildcard $(SOURCES_DIR)/*.py)
 NAMES         := $(patsubst $(SOURCES_DIR)/%.py,%,$(PY_NOTEBOOKS))
@@ -59,8 +64,10 @@ SOLUTION_LOCAL := $(NAMES:%=$(SOLUTION_DIR)/%.ipynb)
 SOLUTION_COLAB := $(NAMES:%=$(SOLUTION_DIR)/%.colab.ipynb)
 DEPFILES      := $(NAMES:%=$(DEPDIR)/%.d)
 TESTED        := $(NAMES:%=$(TESTED_DIR)/%.tested)
+RESOLVED      := $(NAMES:%=$(RESOLVED_DIR)/%.resolved)
 
-.PHONY: help all notebooks teacher solution bundle check check-bundle show-tests clean
+.PHONY: help all notebooks teacher solution bundle check check-resolved \
+	check-bundle show-tests show-resolved clean
 help:
 	@echo "Practicals targets:"
 	@echo "  notebooks        student notebooks (local + Colab) + uv zip"
@@ -70,10 +77,15 @@ help:
 	@echo "  bundle           the uv-ready student zip only"
 	@echo "  check-bundle     verify the zip resolves with uv (no install)"
 	@echo "  all              notebooks + teacher"
-	@echo "  check            run every source in TESTING_MODE (figures via imgcat),"
-	@echo "                   tracking pass/fail under $(TESTED_DIR)/"
+	@echo "  check            run every source as a script in TESTING_MODE (figures"
+	@echo "                   via imgcat), tracking pass/fail under $(TESTED_DIR)/"
 	@echo "  check:<name>     run a single source (e.g. make check:tp1-embeddings)"
-	@echo "  show-tests       show last pass/fail status per source"
+	@echo "  check-resolved   run every source with internal imports inlined (the"
+	@echo "                   exact code students get), tracking pass/fail; catches"
+	@echo "                   missing inlined dependencies that a plain 'check' hides"
+	@echo "  check-resolved:<name>  resolved run of a single source"
+	@echo "  show-tests       show last 'check' pass/fail status per source"
+	@echo "  show-resolved    show last 'check-resolved' pass/fail status per source"
 	@echo "  clean            remove generated notebooks, teacher/, zip, $(DEPDIR), $(TESTED_DIR)"
 	@echo ""
 	@echo "Sources: $(NAMES)"
@@ -189,15 +201,45 @@ show-tests:
 		printf "  %-28s %s\n" "$$n" "$$s"; \
 	done
 
+# ---- intermediate check: run each source with internal imports resolved ----
+# Executes exactly the inlined subset a student notebook will contain, so a
+# tree-shaking bug (a symbol a copied helper needs but that was not copied)
+# surfaces here as a NameError — at the real source location. A plain `check`
+# imports the whole src/ module and so cannot catch this.
+# `make check-resolved:<name>` runs a single source.
+check-resolved\:%:
+	@$(MAKE) $(RESOLVED_DIR)/$*.resolved
+
+$(RESOLVED_DIR)/%.resolved: $(SOURCES_DIR)/%.py | $(RESOLVED_DIR)
+	@rm -f $(RESOLVED_DIR)/$*.failed $@
+	@echo "== $* (resolved imports) =="
+	@TESTING_MODE=full $(RUN) $< \
+		&& (touch $@ && printf '\033[32m  PASS %s\033[0m\n' "$*") \
+		|| (touch $(RESOLVED_DIR)/$*.failed && printf '\033[31m  FAIL %s\033[0m\n' "$*")
+
+check-resolved: $(RESOLVED)
+	@echo "Done — see 'make show-resolved'"
+
+show-resolved:
+	@printf "  %-28s %s\n" "source" "status"
+	@printf "  %-28s %s\n" "------" "------"
+	@for n in $(NAMES); do \
+		if [ -f "$(RESOLVED_DIR)/$$n.resolved" ]; then s="[PASS]"; \
+		elif [ -f "$(RESOLVED_DIR)/$$n.failed" ]; then s="[FAIL]"; \
+		else s="[ -- ]"; fi; \
+		printf "  %-28s %s\n" "$$n" "$$s"; \
+	done
+
 clean:
-	@rm -rf $(TEACHER_DIR) $(SOLUTION_DIR) $(DEPDIR) $(TESTED_DIR) $(BUNDLE_DIR) \
-		$(STUDENT_ENV_DIR) $(STUDENT_LOCAL) $(STUDENT_COLAB) $(ZIP)
+	@rm -rf $(TEACHER_DIR) $(SOLUTION_DIR) $(DEPDIR) $(TESTED_DIR) $(RESOLVED_DIR) \
+		$(BUNDLE_DIR) $(STUDENT_ENV_DIR) $(STUDENT_LOCAL) $(STUDENT_COLAB) $(ZIP)
 
 # ---- bookkeeping ----
-# Auto-dependency files (for `copy`-marker includes) are written as a side effect
-# of the filter (--depdir) and only *included* to add extra prerequisites — they are
-# NOT prerequisites themselves (otherwise rewriting them on each build would make
-# the build non-idempotent).
+# Auto-dependency files (listing the internal src/ modules inlined into each
+# notebook) are written as a side effect of the filter (--depdir) and only
+# *included* to add extra prerequisites — they are NOT prerequisites themselves
+# (otherwise rewriting them on each build would make the build non-idempotent).
 $(DEPDIR): ; @mkdir -p $@
 $(TESTED_DIR): ; @mkdir -p $@
+$(RESOLVED_DIR): ; @mkdir -p $@
 -include $(wildcard $(DEPFILES))
