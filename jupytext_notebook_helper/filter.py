@@ -329,11 +329,14 @@ def get_minimal_install_set(
     all_packages: dict,
     dependencies: dict,
     force_include: set = set(),
+    exclude: set = set(),
 ) -> set:
     """
     Given imported packages, find the minimal set of packages to install.
 
-    1. Filter imports to only those that exist in the lock file
+    1. Filter imports to only those that exist in the lock file (dropping the
+       excluded ones, so that an excluded package — e.g. the project itself —
+       does not shadow its whole dependency tree in step 2)
     2. Remove packages that are transitively implied by others
     """
 
@@ -345,9 +348,14 @@ def get_minimal_install_set(
         return re.sub(r"[-_.]+", "-", name).lower()
 
     norm_to_key = {_norm(k): k for k in all_packages}
-    wanted = imported_packages | force_include
+    excluded = {_norm(p) for p in exclude}
+    wanted = (imported_packages | force_include) - {
+        p for p in imported_packages if _norm(p) in excluded
+    }
     packages_to_install = {
-        norm_to_key[_norm(p)] for p in wanted if _norm(p) in norm_to_key
+        norm_to_key[_norm(p)]
+        for p in wanted
+        if _norm(p) in norm_to_key and _norm(p) not in excluded
     }
 
     logging.info("Imported packages: %s", wanted)
@@ -485,6 +493,7 @@ def render_pip_cell(imports: Imports) -> str:
         uv_info.all_packages,
         uv_info.dependencies,
         force_include=PIP_FORCE_INCLUDE,
+        exclude=PIP_EXCLUDE,
     )
     logging.debug("Minimal packages to install: %s", minimal_packages)
 

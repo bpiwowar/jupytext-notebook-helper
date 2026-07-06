@@ -285,3 +285,46 @@ def test_pip_cell_covers_late_and_inlined_imports(tmp_path):
     # `numpy` is imported after the pip cell, `torch` only by the inlined module
     assert "numpy==2.0.0" in pip_source
     assert "torch==2.8.0" in pip_source
+
+
+def test_pip_excluded_package_does_not_shadow_its_dependencies(tmp_path):
+    """A --pip-exclude'd package (typically the project itself, installed as an
+    editable) must not remove its own dependencies from the install set."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'proj'\n")
+    (tmp_path / "uv.lock").write_text(
+        textwrap.dedent(
+            """
+            version = 1
+
+            [[package]]
+            name = "proj"
+            version = "0.1.0"
+            dependencies = [{ name = "numpy" }]
+
+            [package.metadata]
+            requires-dist = [{ name = "numpy" }]
+
+            [[package]]
+            name = "numpy"
+            version = "2.0.0"
+            """
+        )
+    )
+    src = tmp_path / "sample.py"
+    src.write_text(
+        textwrap.dedent(
+            """
+            # %% tags=["pip"]
+
+            # %%
+            import numpy as np
+            import proj
+            """
+        ).lstrip()
+    )
+    nb = _run(["--uv-root", str(tmp_path), "--pip-exclude", "proj"], src)
+    pip_source = next(
+        _cell_source(c) for c in nb["cells"] if "%pip install" in _cell_source(c)
+    )
+    assert "numpy==2.0.0" in pip_source
+    assert "proj" not in pip_source
