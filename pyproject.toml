@@ -30,6 +30,8 @@ dependencies = [
     # build-time filter (jupytext-percent → student/teacher/colab notebooks)
     "jupytext>=1.17",
     "nbformat>=5.10",
+    # tomllib is stdlib on 3.11+; backport for 3.10 (used by uvutils)
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
