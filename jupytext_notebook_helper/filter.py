@@ -28,7 +28,6 @@ hint = 2
 """
 
 import argparse
-import ast
 import base64
 import logging
 import mimetypes
@@ -36,10 +35,16 @@ import re
 import sys
 from functools import partial
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Set, Union
 
 import jupytext
 import nbformat
+
+from jupytext_notebook_helper.inlining import (
+    Imports,
+    InternalResolver,
+    find_imports,
+)
 
 re_student_start = re.compile(
     r"""^(\s*)#(?:.*)\[\[STUDENT\]\]\s*(\S.*\S)?\s*$""", re.IGNORECASE
@@ -59,8 +64,6 @@ RE_MARKDOWN_INCLUDE = re.compile(r"""#include\s+(\S+)\s*$""")
 RE_MARKDOWN_EXTENDS = re.compile(r"""#extends\s+(\S+)\s*$""")
 RE_MARKDOWN_BLOCK = re.compile(r"""^(\s*)#block\s+(\S+)\s*$""")
 RE_MARKDOWN_CONTENT = re.compile(r"""^(\s*)#content\s+(\S+)\s*$""")
-
-RE_IMPORT_ALL = re.compile(r"""from ([\.\w]+) import .*(?:\s*#.*)$""")
 
 # Match print_header("title") or print_header('title') at the start of a line
 RE_PRINT_HEADER = re.compile(r"""^print_header\s*\(\s*["'](.+?)["']\s*\)\s*$""")
@@ -157,6 +160,12 @@ parser.add_argument(
     default=".",
     help="directory containing uv.lock / pyproject.toml (default: current dir)",
 )
+parser.add_argument(
+    "--src-root",
+    default="src",
+    help="directory holding the internal library modules that get inlined "
+    "when imported (default: src)",
+)
 parser.add_argument("source", nargs="?")
 
 
@@ -167,6 +176,22 @@ included_tags = set(args.include or [])
 PIP_EXCLUDE |= set(args.pip_exclude or [])
 PIP_FORCE_INCLUDE |= set(args.pip_force_include or [])
 UV_ROOT = args.uv_root or "."
+
+# Resolves `from <internal> import ...` against src-root and inlines the needed
+# symbols (with their transitive dependencies) instead of importing them.
+resolver = InternalResolver(src_root=args.src_root)
+
+# Old explicit-marker tags (`imports`, `copy`) are no longer needed: imports are
+# now gathered from anywhere and internal imports inlined automatically. Warn
+# once per tag if a source still uses them.
+_deprecated_tags_warned: Set[str] = set()
+
+
+def _warn_deprecated_tag(tag: str, message: str) -> None:
+    if tag not in _deprecated_tags_warned:
+        _deprecated_tags_warned.add(tag)
+        logging.warning("the %r cell tag is no longer necessary: %s", tag, message)
+
 
 teacher_mode = args.teacher
 solution_mode = args.solution
@@ -181,65 +206,6 @@ document = jupytext.read(
     open(args.source) if args.source else sys.stdin, fmt="py:percent"
 )
 deps: List[str] = []
-
-
-class Imports:
-    def __init__(self):
-        #: Defined symbols (either module or module/symbol)
-        self.symbols = {}
-        self.imports_from = {}
-        self.imports = {}
-
-    def empty(self):
-        return not self.imports and not self.imports_from
-
-    @staticmethod
-    def alias(name, alias):
-        if name == alias:
-            return name
-        return f"{name} as {alias}"
-
-    def to_code(self):
-        s = ""
-        for module, names in self.imports.items():
-            for name in names:
-                s += f"import {Imports.alias(module, name)}\n"
-        for module, mapping in self.imports_from.items():
-            s += f"from {module} import " + ", ".join(
-                [Imports.alias(name, alias) for alias, name in mapping.items()]
-            )
-            s += "\n"
-
-        return s
-
-    def set(self, name: str, value):
-        previous = self.symbols.get(name, None)
-        if previous is None:
-            self.symbols[name] = value
-            return True
-        elif previous != value:
-            raise RuntimeError(f"Symbol mismatch: {name} / {previous} vs {value}")
-
-        return False
-
-    def add(self, source: str):
-        for st in ast.parse(source).body:
-            if isinstance(st, ast.Import):
-                for symbol in st.names:
-                    name = symbol.asname or symbol.name
-                    if self.set(name, symbol.name):
-                        self.imports.setdefault(symbol.name, []).append(name)
-
-            elif isinstance(st, ast.ImportFrom):
-                for symbol in st.names:
-                    name = symbol.asname or symbol.name
-                    if self.set(name, (st.module, symbol.name)):
-                        self.imports_from.setdefault(st.module, {})[name] = symbol.name
-
-            else:
-                raise RuntimeError(
-                    "(processing imports Cannot interpret %s [%s]", type(st)
-                )
 
 
 def process_markdown(
@@ -413,23 +379,96 @@ def get_minimal_install_set(
     return minimal_set
 
 
+def _marker_excluded_ranges(source: str) -> set:
+    """Line numbers (1-based) inside [[remove]]/[[student]] blocks.
+
+    Imports there are left untouched (not moved to the shared imports cell), so
+    e.g. a teacher-only import inside [[remove]] does not leak to students.
+    """
+    excluded = set()
+    in_student = in_remove = False
+    for i, line in enumerate(source.split("\n"), start=1):
+        if re_remove_start.match(line):
+            in_remove, _ = True, excluded.add(i)
+            continue
+        if re_remove_end.match(line):
+            in_remove, _ = False, excluded.add(i)
+            continue
+        if re_student_start.match(line):
+            in_student, _ = True, excluded.add(i)
+            continue
+        if re_student_end.match(line):
+            in_student, _ = False, excluded.add(i)
+            continue
+        if in_student or in_remove:
+            excluded.add(i)
+    return excluded
+
+
+def rewrite_cell_imports(source: str, imports: Imports) -> str:
+    """Move external imports to the shared cell and inline internal ones.
+
+    Top-level ``import``/``from`` statements are removed from the cell: external
+    ones are recorded in ``imports`` (emitted later at the ``# [[imports]]``
+    marker); ``from <internal> import ...`` statements are replaced in place by
+    the requested symbols plus their transitive dependencies, with the external
+    imports the inlined code needs folded back into ``imports``.
+    """
+    try:
+        parsed = find_imports(source)
+    except SyntaxError:
+        # Cell is not valid Python on its own (e.g. contains a `%magic`); leave
+        # its imports alone.
+        return source
+    if not parsed:
+        return source
+
+    excluded = _marker_excluded_ranges(source)
+    lines = source.split("\n")
+    plan = {}  # start lineno -> (end lineno, replacement lines)
+
+    for imp in parsed:
+        if any(ln in excluded for ln in range(imp.lineno, imp.end_lineno + 1)):
+            continue
+
+        if imp.is_from and resolver.is_internal(imp.module, imp.level):
+            logging.info("Inlining internal import from %s", imp.module)
+            result = resolver.resolve(imp.module, imp.names)
+            for ext in result.external:
+                imports.add(ext)
+            block_text = "\n\n\n".join(block.source for block in result.blocks)
+            plan[imp.lineno] = (
+                imp.end_lineno,
+                block_text.split("\n") if block_text else [],
+            )
+        else:
+            imports.add(imp.source)
+            plan[imp.lineno] = (imp.end_lineno, [])
+
+    if not plan:
+        return source
+
+    out: List[str] = []
+    i = 0
+    while i < len(lines):
+        lineno = i + 1
+        if lineno in plan:
+            end, replacement = plan[lineno]
+            out.extend(replacement)
+            i = end
+        else:
+            out.append(lines[i])
+            i += 1
+    return "\n".join(out)
+
+
 def process(  # noqa: C901
     path: Optional[Path], document, imports: Imports, hide_input=False
 ):
     cells = []
 
-    # First pass: collect all imports from "imports" tagged cells
-    for cell in document["cells"]:
-        tags = cell.get("metadata", {}).get("tags", [])
-        # Skip excluded cells
-        if not any(tag in included_tags for tag in tags) and any(
-            tag in exclude_tags for tag in tags
-        ):
-            continue
-        if "imports" in tags:
-            imports.add(cell["source"])
-
-    # Second pass: process all cells
+    # Process all cells (imports are gathered as we go, then emitted at the
+    # `# [[imports]]` marker once the whole document has been processed).
     for ix, cell in enumerate(document["cells"]):
         lines: list[str | None] = []
         hide: int = 0
@@ -448,8 +487,11 @@ def process(  # noqa: C901
             continue
 
         if "imports" in tags:
-            # Already processed in first pass, skip
-            continue
+            # Imports are now gathered from every cell automatically; the tag is
+            # kept working (the cell is processed normally below) but redundant.
+            _warn_deprecated_tag(
+                "imports", "imports are now gathered from every cell automatically"
+            )
 
         if "pip" in tags:
             assert cell["source"].strip() == "", "cells tagged with pip should be empty"
@@ -510,73 +552,17 @@ def process(  # noqa: C901
             continue
 
         if "copy" in tags:
-            _hide_input = hide_input or ("hide-input" in tags)
-            # Tags to propagate to imported cells
-            propagate_tags = [t for t in tags if t not in ("copy", "hide-input")]
-
-            for line in cell["source"].split("\n"):
-                if m := RE_IMPORT_ALL.match(line):
-                    logging.info("Processing import: %s", line)
-                    module = m.group(1)
-                    module_py = f"src/{module.replace('.', '/')}.py"
-
-                    if module_py in deps:
-                        continue
-
-                    deps.append(module_py)
-                    with (Path(module_py)).open("rt") as fp:
-                        logging.info("Copying imported python file %s", module_py)
-                        r = process(
-                            Path(module_py),
-                            jupytext.read(fp, fmt="py:percent"),
-                            imports,
-                            hide_input=hide_input,
-                        )
-                        for imported_cell in r["cells"]:
-                            if imported_cell["source"].strip() != "":
-                                imported_tags = imported_cell.get("metadata", {}).get(
-                                    "tags", []
-                                )
-
-                                # Propagate tags from the copy cell
-                                for ptag in propagate_tags:
-                                    if ptag not in imported_tags:
-                                        imported_cell.setdefault(
-                                            "metadata", {}
-                                        ).setdefault("tags", []).append(ptag)
-                                        imported_tags = imported_cell["metadata"][
-                                            "tags"
-                                        ]
-
-                                # In teacher mode, add tag comment for propagated tags
-                                if (
-                                    teacher_mode
-                                    and propagate_tags
-                                    and imported_cell["cell_type"] == "code"
-                                ):
-                                    imported_cell["source"] = (
-                                        f"# tags: {imported_tags}\n"
-                                        + imported_cell["source"]
-                                    )
-
-                                if _hide_input or ("hide-input" in imported_tags):
-                                    if "hide-input" not in imported_tags:
-                                        imported_cell.setdefault(
-                                            "metadata", {}
-                                        ).setdefault("tags", []).append("hide-input")
-
-                                    # For jupyter
-                                    imported_cell["metadata"].setdefault("jupyter", {})[
-                                        "source_hidden"
-                                    ] = True
-                            cells.append(imported_cell)
-
-            # Do not copy ourselves
-            continue
+            # The `from <internal> import ...` lines in this cell are now inlined
+            # by rewrite_cell_imports below; the whole-module copy is gone.
+            _warn_deprecated_tag(
+                "copy",
+                "use `from <module> import <names>` and the module is inlined",
+            )
 
         if cell_type == "markdown":
             process_markdown(path, cell["source"], lines, deps)
         else:
+            cell["source"] = rewrite_cell_imports(cell["source"], imports)
             # In teacher mode, show cell tags as a comment
             logging.debug(
                 "Cell %d: cell_type=%s, teacher_mode=%s, tags=%s, metadata=%s",
@@ -766,6 +752,15 @@ def process(  # noqa: C901
 
 imports = Imports()
 document = process(main_py, document, imports)
+
+# Inlined internal modules become build dependencies (so the Makefile rebuilds
+# the notebook when a library module changes).
+for resolved in resolver.resolved_paths:
+    if resolved not in deps:
+        deps.append(resolved)
+
+for warning in imports.alias_warnings():
+    logging.warning("import alias: %s", warning)
 
 if not imports.empty():
     count = 0
