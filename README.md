@@ -26,24 +26,39 @@ The filter (`python -m jupytext_notebook_helper.filter`) manages imports by
 *parsing* the source — no explicit `imports`/`copy` cell tags are needed
 anymore (they still work but warn that they are redundant).
 
-**External imports are gathered automatically.** Write `import numpy as np`
-wherever it is convenient; every top-level import across all cells is collected,
-de-duplicated, and emitted in one place — the cell containing the
-`# [[imports]]` marker if you add one (to control where the block lands),
-otherwise a cell inserted just before the first code cell:
+**Imports can live anywhere; they are gathered automatically.** You no longer
+have to keep imports in a dedicated cell (the old `imports`-tagged section):
+put each `import` next to the code that first needs it, in any cell. Every
+top-level import across all cells is collected, de-duplicated, and emitted in
+one place — the cell containing the `# [[imports]]` marker if you add one (to
+control where the block lands), otherwise a cell inserted just before the first
+code cell. The original import lines are removed from wherever they appeared:
 
 ```python
-# %%
-# [[imports]]
+# %% [markdown]
+# ## Part 1
 
 # %%
-import numpy as np          # moved to the imports cell
+import numpy as np          # gathered — moved out of this cell
 x = np.zeros(3)
+
+# %% [markdown]
+# ## Part 2
+
+# %%
+from collections import defaultdict   # gathered from here too
+counts = defaultdict(int)
 ```
+
+Both imports end up together in a single imports cell, while the cells above
+keep only `x = np.zeros(3)` and `counts = defaultdict(int)`. Add a
+`# [[imports]]` marker cell if you want to choose exactly where that block goes.
 
 If the same module/symbol is pulled in under more than one alias, the build
 logs a warning. Imports inside `[[remove]]` / `[[student]]` blocks are left in
-place, so teacher-only imports never leak into the shared cell.
+place, so teacher-only imports never leak into the shared cell. Imports nested
+inside a function or `if` are also left alone — only module-level (top-level)
+imports are gathered.
 
 **Internal library imports are inlined (with dependency tracking).** An import
 whose module resolves to a file under `--src-root` (default `src/`) is treated
