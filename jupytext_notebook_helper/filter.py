@@ -462,6 +462,67 @@ def rewrite_cell_imports(source: str, imports: Imports) -> str:
     return "\n".join(out)
 
 
+#: `pip`-tagged cells, rendered after the whole document has been processed
+pip_cells: List[dict] = []
+
+
+def render_pip_cell(imports: Imports) -> str:
+    """Render a `%pip install` cell from the (fully gathered) imports."""
+    from jupytext_notebook_helper.uvutils import get_uv_versions
+
+    uv_info = get_uv_versions(
+        uv_lock_path=str(Path(UV_ROOT) / "uv.lock"),
+        project_path=str(Path(UV_ROOT) / "pyproject.toml"),
+    )
+
+    # Get packages actually used based on imports
+    imported_packages = get_imported_packages(imports)
+    logging.debug("Imported packages: %s", imported_packages)
+
+    # Get minimal set of packages to install (removing implied deps)
+    minimal_packages = get_minimal_install_set(
+        imported_packages,
+        uv_info.all_packages,
+        uv_info.dependencies,
+        force_include=PIP_FORCE_INCLUDE,
+    )
+    logging.debug("Minimal packages to install: %s", minimal_packages)
+
+    # Emit a package manifest reused downstream (e.g. to generate a
+    # student-env pyproject from the union over all notebooks) instead of
+    # re-parsing the sources.
+    if args.depdir and args.source:
+        pkgs_file = Path(args.depdir) / (Path(args.source).stem + ".pkgs")
+        pkgs_file.parent.mkdir(parents=True, exist_ok=True)
+        pkgs_file.write_text("\n".join(sorted(minimal_packages)) + "\n")
+
+    source = "# Installing required packages\n\n"
+
+    # Collect each group into a single `%pip install a==1 b==2 ...` invocation
+    # rather than one line per package: faster (a single resolver pass) and
+    # easier to read.
+    build_specs = [
+        f"{package}=={version}"
+        for package, version in uv_info.build_packages.items()
+        if package not in PIP_EXCLUDE
+    ]
+    if build_specs:
+        source += "%pip install " + " ".join(build_specs) + "\n"
+        source += "\n# Installing main packages\n\n"
+
+    main_specs = [
+        f"{package}=={version}"
+        for package, version in uv_info.all_packages.items()
+        # Extract base package name (without extras like [cuda])
+        if package not in PIP_EXCLUDE
+        and package.split("[")[0].lower() in minimal_packages
+    ]
+    if main_specs:
+        source += "%pip install " + " ".join(main_specs) + "\n"
+
+    return source
+
+
 def process(  # noqa: C901
     path: Optional[Path], document, imports: Imports, hide_input=False
 ):
@@ -495,59 +556,11 @@ def process(  # noqa: C901
 
         if "pip" in tags:
             assert cell["source"].strip() == "", "cells tagged with pip should be empty"
-            from jupytext_notebook_helper.uvutils import get_uv_versions
-
-            uv_info = get_uv_versions(
-                uv_lock_path=str(Path(UV_ROOT) / "uv.lock"),
-                project_path=str(Path(UV_ROOT) / "pyproject.toml"),
-            )
-
-            # Get packages actually used based on imports
-            imported_packages = get_imported_packages(imports)
-            logging.debug("Imported packages: %s", imported_packages)
-
-            # Get minimal set of packages to install (removing implied deps)
-            minimal_packages = get_minimal_install_set(
-                imported_packages,
-                uv_info.all_packages,
-                uv_info.dependencies,
-                force_include=PIP_FORCE_INCLUDE,
-            )
-            logging.debug("Minimal packages to install: %s", minimal_packages)
-
-            # Emit a package manifest reused downstream (e.g. to generate a
-            # student-env pyproject from the union over all notebooks) instead of
-            # re-parsing the sources.
-            if args.depdir and args.source:
-                pkgs_file = Path(args.depdir) / (Path(args.source).stem + ".pkgs")
-                pkgs_file.parent.mkdir(parents=True, exist_ok=True)
-                pkgs_file.write_text("\n".join(sorted(minimal_packages)) + "\n")
-
-            source = "# Installing required packages\n\n"
-
-            # Collect each group into a single `%pip install a==1 b==2 ...`
-            # invocation rather than one line per package: faster (a single
-            # resolver pass) and easier to read.
-            build_specs = [
-                f"{package}=={version}"
-                for package, version in uv_info.build_packages.items()
-                if package not in PIP_EXCLUDE
-            ]
-            if build_specs:
-                source += "%pip install " + " ".join(build_specs) + "\n"
-                source += "\n# Installing main packages\n\n"
-
-            main_specs = [
-                f"{package}=={version}"
-                for package, version in uv_info.all_packages.items()
-                # Extract base package name (without extras like [cuda])
-                if package not in PIP_EXCLUDE
-                and package.split("[")[0].lower() in minimal_packages
-            ]
-            if main_specs:
-                source += "%pip install " + " ".join(main_specs) + "\n"
-
-            cell["source"] = source
+            # Rendering is deferred until the whole document has been processed,
+            # so that the install cell covers the imports gathered from *every*
+            # cell (including those pulled in by inlined internal modules),
+            # wherever the pip cell is located in the notebook.
+            pip_cells.append(cell)
             cells.append(cell)
             continue
 
@@ -761,6 +774,11 @@ for resolved in resolver.resolved_paths:
 
 for warning in imports.alias_warnings():
     logging.warning("import alias: %s", warning)
+
+# Render the install cells now that every import (including those of inlined
+# internal modules) has been gathered
+for pip_cell in pip_cells:
+    pip_cell["source"] = render_pip_cell(imports)
 
 if not imports.empty():
     count = 0

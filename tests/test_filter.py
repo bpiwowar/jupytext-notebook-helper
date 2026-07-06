@@ -213,3 +213,75 @@ def test_star_import_of_internal_module(tmp_path):
     text = _text(nb)
     assert "def a(" in text and "def b(" in text and "def _shared(" in text
     assert "from lib import *" not in text
+
+
+def test_pip_cell_covers_late_and_inlined_imports(tmp_path):
+    """The pip cell is rendered after import gathering: it must cover imports
+    located *after* it, including those pulled in by inlined internal modules."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'sample'\n")
+    (tmp_path / "uv.lock").write_text(
+        textwrap.dedent(
+            """
+            version = 1
+
+            [[package]]
+            name = "sample"
+            version = "0.1.0"
+
+            [package.metadata]
+            requires-dist = [{ name = "numpy" }, { name = "torch" }]
+
+            [[package]]
+            name = "numpy"
+            version = "2.0.0"
+
+            [[package]]
+            name = "torch"
+            version = "2.8.0"
+            """
+        )
+    )
+    _write_module(
+        tmp_path,
+        "mylib",
+        """
+        import torch
+
+        def f(x):
+            return torch.relu(x)
+        """,
+    )
+    src = tmp_path / "sample.py"
+    src.write_text(
+        textwrap.dedent(
+            """
+            # %% tags=["pip"]
+
+            # %%
+            # [[imports]]
+
+            # %%
+            import numpy as np
+
+            x = np.zeros(3)
+
+            # %%
+            from mylib import f
+            """
+        ).lstrip()
+    )
+    nb = _run(
+        [
+            "--uv-root",
+            str(tmp_path),
+            "--src-root",
+            str(tmp_path / "src"),
+        ],
+        src,
+    )
+    pip_source = next(
+        _cell_source(c) for c in nb["cells"] if "%pip install" in _cell_source(c)
+    )
+    # `numpy` is imported after the pip cell, `torch` only by the inlined module
+    assert "numpy==2.0.0" in pip_source
+    assert "torch==2.8.0" in pip_source
