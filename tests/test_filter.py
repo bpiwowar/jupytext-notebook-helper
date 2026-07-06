@@ -417,3 +417,85 @@ def test_full_module_inclusion_dotted_access(tmp_path):
     ns = {}
     exec("\n".join(_cell_source(c) for c in nb["cells"]), ns)
     assert ns["result"] == 7
+
+
+def _write_uv(tmp_path, packages):
+    """Write a minimal pyproject/uv.lock; `packages` maps name -> version."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'sample'\n")
+    reqs = ", ".join(f'{{ name = "{n}" }}' for n in packages)
+    lines = [
+        "version = 1",
+        "",
+        "[[package]]",
+        'name = "sample"',
+        'version = "0.1.0"',
+        "",
+        "[package.metadata]",
+        f"requires-dist = [{reqs}]",
+    ]
+    for name, version in packages.items():
+        lines += ["", "[[package]]", f'name = "{name}"', f'version = "{version}"']
+    (tmp_path / "uv.lock").write_text("\n".join(lines) + "\n")
+
+
+def test_colab_auto_inserts_pip_and_imports_before_first_code(tmp_path):
+    _write_uv(tmp_path, {"numpy": "2.0.0"})
+    src = tmp_path / "sample.py"
+    src.write_text(
+        textwrap.dedent(
+            """
+            # %% [markdown]
+            # # Title
+
+            # %%
+            import numpy as np
+            x = np.zeros(3)
+            """
+        ).lstrip()
+    )
+    nb = _run(["--colab", "--uv-root", str(tmp_path)], src)
+    types = [c["cell_type"] for c in nb["cells"]]
+    sources = [_cell_source(c) for c in nb["cells"]]
+    # markdown title, then pip install, then imports, then the body
+    assert types[0] == "markdown"
+    assert "%pip install" in sources[1]
+    assert "numpy==2.0.*" in sources[1]
+    assert "import numpy as np" in sources[2]
+    assert "x = np.zeros(3)" in sources[3]
+
+
+def test_no_colab_flag_means_no_pip_cell(tmp_path):
+    _write_uv(tmp_path, {"numpy": "2.0.0"})
+    src = tmp_path / "sample.py"
+    src.write_text(
+        textwrap.dedent(
+            """
+            # %%
+            import numpy as np
+            x = np.zeros(3)
+            """
+        ).lstrip()
+    )
+    nb = _run(["--uv-root", str(tmp_path)], src)
+    assert "%pip install" not in _text(nb)
+
+
+def test_colab_explicit_pip_cell_not_duplicated(tmp_path):
+    _write_uv(tmp_path, {"numpy": "2.0.0"})
+    src = tmp_path / "sample.py"
+    src.write_text(
+        textwrap.dedent(
+            """
+            # %% tags=["pip"]
+
+            # %%
+            import numpy as np
+            x = np.zeros(3)
+            """
+        ).lstrip()
+    )
+    nb = _run(["--colab", "--uv-root", str(tmp_path)], src)
+    pip_cells = [
+        _cell_source(c) for c in nb["cells"] if "%pip install" in _cell_source(c)
+    ]
+    assert len(pip_cells) == 1  # explicit `pip` cell placed it; no auto-insert

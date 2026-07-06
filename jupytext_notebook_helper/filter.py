@@ -167,6 +167,14 @@ parser.add_argument(
     help="directory holding the internal library modules that get inlined "
     "when imported (default: src)",
 )
+parser.add_argument(
+    "--colab",
+    action="store_true",
+    default=False,
+    help="Colab build: auto-insert a `%%pip install` cell (from the gathered "
+    "imports) before the first code cell, unless the notebook already has a "
+    "`pip`-tagged cell to place it explicitly",
+)
 parser.add_argument("source", nargs="?")
 
 
@@ -196,6 +204,7 @@ def _warn_deprecated_tag(tag: str, message: str) -> None:
 
 teacher_mode = args.teacher
 solution_mode = args.solution
+colab_mode = args.colab
 assert not (teacher_mode and solution_mode), (
     "--teacher and --solution are mutually exclusive"
 )
@@ -776,6 +785,19 @@ for warning in imports.alias_warnings():
 for pip_cell in pip_cells:
     pip_cell["source"] = render_pip_cell(imports)
 
+# Cells to prepend just before the first code cell, in order: the Colab install
+# cell, then the gathered imports. Each is used only when it is not already
+# placed explicitly (via a `pip`-tagged cell / a `# [[imports]]` marker).
+prelude: List[dict] = []
+
+# (1) Colab `%pip install` cell (auto-inserted in --colab builds).
+if colab_mode and not pip_cells:
+    pip_source = render_pip_cell(imports)
+    if "%pip install" in pip_source:
+        prelude.append(nbformat.v4.new_code_cell(source=pip_source))
+
+# (2) Gathered imports: replace the `# [[imports]]` marker if present, else queue
+# a new cell for the prelude.
 if not imports.empty():
     count = 0
     for cell in document["cells"]:
@@ -790,14 +812,14 @@ if not imports.empty():
             break
 
     if count == 0:
-        # No explicit `# [[imports]]` marker: insert the gathered imports as a
-        # new code cell right before the first code cell.
-        insert_at = next(
-            (i for i, c in enumerate(document["cells"]) if c["cell_type"] == "code"),
-            len(document["cells"]),
-        )
-        import_cell = nbformat.v4.new_code_cell(source=imports.to_code().rstrip("\n"))
-        document["cells"].insert(insert_at, import_cell)
+        prelude.append(nbformat.v4.new_code_cell(source=imports.to_code().rstrip("\n")))
+
+if prelude:
+    insert_at = next(
+        (i for i, c in enumerate(document["cells"]) if c["cell_type"] == "code"),
+        len(document["cells"]),
+    )
+    document["cells"][insert_at:insert_at] = prelude
 
 jupytext.write(document, sys.stdout, fmt="ipynb")
 

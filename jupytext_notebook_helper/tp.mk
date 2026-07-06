@@ -19,7 +19,9 @@
 #                            -> $(SOLUTION_DIR)/<name>.colab.ipynb   solution . Colab
 #
 # Cell-tag gating (in the sources): [[student]]..[[/student]] blanks solutions;
-# tags `teacher`, `colab`, `not-colab`, `pip` (empty cell -> pinned install).
+# tags `teacher`, `colab`, `not-colab`. The Colab `%pip install` cell is inserted
+# automatically (before the first code cell) for the .colab variants; an empty
+# `pip`-tagged cell is only needed to place it somewhere else.
 
 # ---- configurable variables (override before the include) ----
 SOURCES_DIR    ?= sources
@@ -96,31 +98,31 @@ teacher: $(TEACHER_LOCAL) $(TEACHER_COLAB)
 solution: $(SOLUTION_LOCAL) $(SOLUTION_COLAB)
 bundle: $(ZIP)
 
-# student . Colab — colab+pip cells, no solutions, drop not-colab.
+# student . Colab — auto `%pip install` cell, no solutions, drop not-colab.
 $(DESTDIR_TP)/%.colab.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
 	@mkdir -p $(DESTDIR_TP)
-	$(FILTER) --depdir $(DEPDIR) --exclude teacher,not-colab $(PIP_ARGS) $< > $@ || rm -f "$@"
+	$(FILTER) --depdir $(DEPDIR) --colab --exclude teacher,not-colab $(PIP_ARGS) $< > $@ || rm -f "$@"
 
 # student . local — no install cell, no solutions.
 $(DESTDIR_TP)/%.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
 	@mkdir -p $(DESTDIR_TP)
 	$(FILTER) --depdir $(DEPDIR) --exclude teacher,colab,pip $< > $@ || rm -f "$@"
 
-# teacher . Colab — solutions + colab install (no not-colab helper).
+# teacher . Colab — solutions + auto `%pip install` cell (no not-colab helper).
 $(TEACHER_DIR)/%.colab.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
 	@mkdir -p $(TEACHER_DIR)
-	$(FILTER) --depdir $(DEPDIR) --teacher --exclude not-colab $(PIP_ARGS) $< > $@ || rm -f "$@"
+	$(FILTER) --depdir $(DEPDIR) --colab --teacher --exclude not-colab $(PIP_ARGS) $< > $@ || rm -f "$@"
 
 # teacher . local — solutions, instructor helper cell kept.
 $(TEACHER_DIR)/%.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
 	@mkdir -p $(TEACHER_DIR)
 	$(FILTER) --depdir $(DEPDIR) --teacher --exclude colab,pip $< > $@ || rm -f "$@"
 
-# solution (corrigé) . Colab — solutions kept, colab install, but no instructor
-# content: teacher-tagged cells dropped, no tag comments, no [[...]] markers.
+# solution (corrigé) . Colab — solutions kept, auto `%pip install` cell, but no
+# instructor content: teacher-tagged cells dropped, no tag comments, no markers.
 $(SOLUTION_DIR)/%.colab.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
 	@mkdir -p $(SOLUTION_DIR)
-	$(FILTER) --depdir $(DEPDIR) --solution --exclude teacher,not-colab $(PIP_ARGS) $< > $@ || rm -f "$@"
+	$(FILTER) --depdir $(DEPDIR) --colab --solution --exclude teacher,not-colab $(PIP_ARGS) $< > $@ || rm -f "$@"
 
 # solution (corrigé) . local — solutions kept, no install cell, no instructor content.
 $(SOLUTION_DIR)/%.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)

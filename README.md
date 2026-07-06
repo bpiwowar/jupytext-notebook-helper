@@ -101,6 +101,24 @@ Use `from mylib.my.module import foo` when you only want `foo` (tree-shaken, no
 side effects); use `import mylib.my.module` when you want the full module and
 dotted interaction.
 
+## Colab install cell
+
+For the Colab variants (built with `--colab`), a `%pip install` cell is inserted
+**automatically**, just before the first code cell — right ahead of the gathered
+imports:
+
+```
+[ markdown intro ]
+[ %pip install ... ]   ← auto-inserted for --colab
+[ imports ]            ← auto-inserted (or the # [[imports]] marker)
+[ first code cell ]
+```
+
+It pins the imported packages (and any pulled in by inlined modules) from
+`uv.lock`, to the minor series (`==x.y.*`, see above). You only need an explicit
+empty `pip`-tagged cell if you want the install cell somewhere other than the
+top. Non-Colab builds (no `--colab`) get no install cell.
+
 ## Testing: three levels
 
 - `make check` — runs each source **as a script**, importing internal helpers
