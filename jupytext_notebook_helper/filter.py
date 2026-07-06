@@ -303,89 +303,59 @@ def get_imported_packages(imports: Imports) -> set:
     return imported
 
 
-def get_all_transitive_deps(
-    package: str, dependencies: dict, visited: set = None
-) -> set:
+def relaxed_version_spec(version: Optional[str]) -> str:
+    """A patch-flexible version specifier: ``2.6.1`` -> ``==2.6.*``.
+
+    Pins the major.minor (so the locked version's behaviour is preserved) but
+    lets pip pick up other patch releases in the same minor series. This keeps
+    the Colab install close to the locked set while avoiding over-tight
+    ``==x.y.z`` pins that can make resolution fail.
     """
-    Get all transitive dependencies of a package.
-    """
-    if visited is None:
-        visited = set()
-
-    if package in visited:
-        return set()
-
-    visited.add(package)
-    result = set()
-
-    for dep in dependencies.get(package, set()):
-        result.add(dep)
-        result.update(get_all_transitive_deps(dep, dependencies, visited))
-
-    return result
+    if not version:
+        return ""  # unknown version -> no constraint
+    parts = version.split(".")
+    if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+        return f"=={parts[0]}.{parts[1]}.*"
+    return f"=={version}"
 
 
-def get_minimal_install_set(
+def get_install_set(
     imported_packages: set,
     all_packages: dict,
-    dependencies: dict,
     force_include: set = set(),
     exclude: set = set(),
 ) -> set:
-    """
-    Given imported packages, find the minimal set of packages to install.
+    """Packages to pin in the install cell.
 
-    1. Filter imports to only those that exist in the lock file (dropping the
-       excluded ones, so that an excluded package — e.g. the project itself —
-       does not shadow its whole dependency tree in step 2)
-    2. Remove packages that are transitively implied by others
+    Every imported package present in the lock file, plus force-included ones,
+    minus excluded ones. Transitive dependencies that are *also* imported are
+    kept (not pruned as "implied by another package"): their locked versions
+    can matter, so they are pinned explicitly rather than left for pip to
+    resolve freely.
     """
 
-    # Step 1: Keep only packages that exist in the lock file.
-    # Match using PEP 503 normalization (case-insensitive, runs of -_. -> -) so that
-    # e.g. the import `impact_index` resolves to the lock entry `impact-index`
-    # without needing a hand-maintained mapping.
+    # Match using PEP 503 normalization (case-insensitive, runs of -_. -> -) so
+    # that e.g. the import `impact_index` resolves to the lock entry
+    # `impact-index` without a hand-maintained mapping.
     def _norm(name):
         return re.sub(r"[-_.]+", "-", name).lower()
 
     norm_to_key = {_norm(k): k for k in all_packages}
     excluded = {_norm(p) for p in exclude}
-    wanted = (imported_packages | force_include) - {
-        p for p in imported_packages if _norm(p) in excluded
-    }
-    packages_to_install = {
+
+    install_set = {
         norm_to_key[_norm(p)]
-        for p in wanted
+        for p in (imported_packages | force_include)
         if _norm(p) in norm_to_key and _norm(p) not in excluded
     }
-
-    logging.info("Imported packages: %s", wanted)
-    logging.info("Packages in lock file that are imported: %s", packages_to_install)
-
-    # Step 2: Remove packages that are implied by others
-    # A package is implied if another package in the set has it as a transitive dep
-    minimal_set = set(packages_to_install)
-
-    for pkg in packages_to_install:
-        if pkg not in minimal_set:
-            continue  # Already removed
-
-        # Get all transitive deps of this package
-        all_deps = get_all_transitive_deps(pkg, dependencies)
-
-        # Remove any packages in our set that are covered by this package's deps
-        for dep in all_deps:
-            if dep in minimal_set and dep != pkg:
-                logging.debug("Removing %s (implied by %s)", dep, pkg)
-                minimal_set.discard(dep)
-
-    # Always keep force-included packages, even if implied by another: these are
-    # runtime-only deps (e.g. sentencepiece) that pip will not pull automatically.
-    minimal_set |= {
+    # Force-included packages win even over exclusion (runtime-only deps such as
+    # sentencepiece that pip will not pull on its own).
+    install_set |= {
         norm_to_key[_norm(p)] for p in force_include if _norm(p) in norm_to_key
     }
 
-    return minimal_set
+    logging.info("Packages to install (pinned): %s", install_set)
+    return install_set
 
 
 def _marker_excluded_ranges(source: str) -> set:
@@ -504,15 +474,14 @@ def render_pip_cell(imports: Imports) -> str:
     imported_packages = get_imported_packages(imports)
     logging.debug("Imported packages: %s", imported_packages)
 
-    # Get minimal set of packages to install (removing implied deps)
-    minimal_packages = get_minimal_install_set(
+    # Set of packages to pin (keeps imported transitive deps, does not prune them)
+    install_packages = get_install_set(
         imported_packages,
         uv_info.all_packages,
-        uv_info.dependencies,
         force_include=PIP_FORCE_INCLUDE,
         exclude=PIP_EXCLUDE,
     )
-    logging.debug("Minimal packages to install: %s", minimal_packages)
+    logging.debug("Packages to install: %s", install_packages)
 
     # Emit a package manifest reused downstream (e.g. to generate a
     # student-env pyproject from the union over all notebooks) instead of
@@ -520,15 +489,16 @@ def render_pip_cell(imports: Imports) -> str:
     if args.depdir and args.source:
         pkgs_file = Path(args.depdir) / (Path(args.source).stem + ".pkgs")
         pkgs_file.parent.mkdir(parents=True, exist_ok=True)
-        pkgs_file.write_text("\n".join(sorted(minimal_packages)) + "\n")
+        pkgs_file.write_text("\n".join(sorted(install_packages)) + "\n")
 
     source = "# Installing required packages\n\n"
 
-    # Collect each group into a single `%pip install a==1 b==2 ...` invocation
+    # Collect each group into a single `%pip install a==1.* b==2.* ...` invocation
     # rather than one line per package: faster (a single resolver pass) and
-    # easier to read.
+    # easier to read. Versions are pinned to the minor series (`==x.y.*`), not
+    # exactly, so patch updates are allowed.
     build_specs = [
-        f"{package}=={version}"
+        f"{package}{relaxed_version_spec(version)}"
         for package, version in uv_info.build_packages.items()
         if package not in PIP_EXCLUDE
     ]
@@ -537,11 +507,11 @@ def render_pip_cell(imports: Imports) -> str:
         source += "\n# Installing main packages\n\n"
 
     main_specs = [
-        f"{package}=={version}"
+        f"{package}{relaxed_version_spec(version)}"
         for package, version in uv_info.all_packages.items()
         # Extract base package name (without extras like [cuda])
         if package not in PIP_EXCLUDE
-        and package.split("[")[0].lower() in minimal_packages
+        and package.split("[")[0].lower() in install_packages
     ]
     if main_specs:
         source += "%pip install " + " ".join(main_specs) + "\n"

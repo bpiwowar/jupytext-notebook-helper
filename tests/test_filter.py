@@ -282,9 +282,10 @@ def test_pip_cell_covers_late_and_inlined_imports(tmp_path):
     pip_source = next(
         _cell_source(c) for c in nb["cells"] if "%pip install" in _cell_source(c)
     )
-    # `numpy` is imported after the pip cell, `torch` only by the inlined module
-    assert "numpy==2.0.0" in pip_source
-    assert "torch==2.8.0" in pip_source
+    # `numpy` is imported after the pip cell, `torch` only by the inlined module;
+    # versions are pinned to the minor series (`==x.y.*`), not exactly.
+    assert "numpy==2.0.*" in pip_source
+    assert "torch==2.8.*" in pip_source
 
 
 def test_pip_excluded_package_does_not_shadow_its_dependencies(tmp_path):
@@ -326,8 +327,59 @@ def test_pip_excluded_package_does_not_shadow_its_dependencies(tmp_path):
     pip_source = next(
         _cell_source(c) for c in nb["cells"] if "%pip install" in _cell_source(c)
     )
-    assert "numpy==2.0.0" in pip_source
+    assert "numpy==2.0.*" in pip_source
     assert "proj" not in pip_source
+
+
+def test_pip_keeps_imported_transitive_dependencies(tmp_path):
+    """An imported package that is also a dependency of another imported package
+    is pinned explicitly (not pruned): its locked version can matter."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'sample'\n")
+    (tmp_path / "uv.lock").write_text(
+        textwrap.dedent(
+            """
+            version = 1
+
+            [[package]]
+            name = "sample"
+            version = "0.1.0"
+
+            [package.metadata]
+            requires-dist = [{ name = "numpy" }, { name = "torch" }]
+
+            [[package]]
+            name = "numpy"
+            version = "2.0.1"
+
+            [[package]]
+            name = "torch"
+            version = "2.6.1"
+            dependencies = [{ name = "numpy" }]
+            """
+        )
+    )
+    src = tmp_path / "sample.py"
+    src.write_text(
+        textwrap.dedent(
+            """
+            # %% tags=["pip"]
+
+            # %%
+            import numpy as np
+            import torch
+            """
+        ).lstrip()
+    )
+    nb = _run(["--uv-root", str(tmp_path)], src)
+    pip_source = next(
+        _cell_source(c) for c in nb["cells"] if "%pip install" in _cell_source(c)
+    )
+    # numpy is a dependency of torch but also imported -> kept and pinned
+    assert "numpy==2.0.*" in pip_source
+    assert "torch==2.6.*" in pip_source
+    # relaxed to the minor series, not the exact patch
+    assert "==2.0.1" not in pip_source
+    assert "==2.6.1" not in pip_source
 
 
 def test_full_module_inclusion_dotted_access(tmp_path):
