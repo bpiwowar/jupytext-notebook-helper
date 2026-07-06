@@ -33,6 +33,12 @@ class ResolveError(RuntimeError):
     """Raised when an internal import cannot be resolved (missing symbol...)."""
 
 
+def _start_lineno(node: ast.AST) -> int:
+    """First source line of a node, *including* its decorators."""
+    decorators = getattr(node, "decorator_list", None) or []
+    return min([getattr(node, "lineno", 1)] + [d.lineno for d in decorators])
+
+
 @dataclass
 class Origin:
     """Where an inlined chunk of code came from."""
@@ -273,7 +279,7 @@ class InternalModule:
             stmt.deps.update(computed)
 
     def _record(self, node: ast.AST) -> Optional[_Stmt]:
-        origin = Origin(self.path, getattr(node, "lineno", 1))
+        origin = Origin(self.path, _start_lineno(node))
         idx = len(self.stmts)
 
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -340,6 +346,11 @@ class InternalModule:
         self.bindings[name] = _Binding(name, stmt.index, stmt.deps)
 
     def _segment(self, node: ast.AST) -> str:
+        # `get_source_segment` starts at the `def`/`class` keyword; decorators
+        # live on the lines above and must be part of the copied source.
+        if getattr(node, "decorator_list", None):
+            lines = self.source.split("\n")
+            return "\n".join(lines[_start_lineno(node) - 1 : node.end_lineno])
         return ast.get_source_segment(self.source, node) or ""
 
     @staticmethod
@@ -458,10 +469,48 @@ class InternalModule:
 # --------------------------------------------------------------------------- #
 
 
+def _reconstruct_import(stmt: "_Stmt") -> str:
+    """Render a single-name import binding back to source."""
+    if stmt.import_orig is None:
+        return f"import {Imports.alias(stmt.import_module, stmt.import_alias)}"
+    spec = Imports.alias(stmt.import_orig, stmt.import_alias)
+    dots = "." * stmt.import_level
+    return f"from {dots}{stmt.import_module or ''} import {spec}"
+
+
 @dataclass
 class ResolvedImport:
     blocks: List[ExtractedSymbol]  # new definitions to inline, in order
     external: List[str]  # external import statements the inlined code needs
+
+
+@dataclass
+class IncludedModule:
+    """A whole internal module included as a real module object."""
+
+    dotted: str
+    package: str  # __package__ value ("" for a top-level module)
+    source: str  # full module source
+    path: str  # real file (for compile filename / tracebacks)
+
+
+@dataclass
+class ModuleInclusion:
+    """Result of a full ``import <internal.module>`` inclusion.
+
+    ``modules`` is in dependency order (a module's internal sub-imports come
+    first); ``packages`` are the intermediate namespace packages that must exist
+    for dotted attribute access; ``bind_name`` is the name bound in the notebook
+    namespace (``mylib`` for ``import mylib.my.module``).
+    """
+
+    modules: List[IncludedModule]
+    packages: List[str]
+    bind_name: str
+    external: List[str]
+
+    def empty(self) -> bool:
+        return not self.modules and not self.packages
 
 
 class InternalResolver:
@@ -474,6 +523,8 @@ class InternalResolver:
         self._emitted: Set[Tuple[str, int]] = set()
         #: alias assignment lines already emitted
         self._emitted_aliases: Set[Tuple[str, str]] = set()
+        #: whole modules already included via `import <internal.module>`
+        self._emitted_modules: Set[str] = set()
         #: resolved module files (for Makefile dependency tracking)
         self.resolved_paths: List[str] = []
 
@@ -610,11 +661,66 @@ class InternalResolver:
 
         # External dependency used by the inlined code: surface it for the
         # notebook's import cell.
-        if stmt.import_orig is None:
-            external.append(
-                f"import {Imports.alias(stmt.import_module, stmt.import_alias)}"
-            )
-        else:
-            spec = Imports.alias(stmt.import_orig, stmt.import_alias)
-            dots = "." * stmt.import_level
-            external.append(f"from {dots}{stmt.import_module or ''} import {spec}")
+        external.append(_reconstruct_import(stmt))
+
+    # -- full module inclusion (`import mylib.my.module`) ------------------- #
+
+    def resolve_module_import(
+        self, dotted: str, _stack: Tuple[str, ...] = ()
+    ) -> ModuleInclusion:
+        """Include ``dotted`` (and any internal modules it imports) whole.
+
+        Unlike :meth:`resolve`, this copies the *entire* module as a real module
+        object so ``dotted``'s attributes stay reachable (``mylib.my.module.foo``)
+        -- the faithful equivalent of ``import mylib.my.module``.
+        """
+        order: List[IncludedModule] = []
+        external: List[str] = []
+        packages: Set[str] = set()
+        visited: Set[str] = set()
+
+        def visit(name: str, stack: Tuple[str, ...]) -> None:
+            if name in stack:
+                raise ResolveError(
+                    "Circular internal import: " + " -> ".join(stack + (name,))
+                )
+            if name in visited:
+                return
+            visited.add(name)
+            module = self.get_module(name)
+
+            # Every dotted ancestor is a namespace package we must create.
+            parent = name.rpartition(".")[0]
+            while parent:
+                packages.add(parent)
+                parent = parent.rpartition(".")[0]
+
+            # Recurse into internal sub-imports (deps first); collect externals.
+            for stmt in module.stmts:
+                if stmt.kind != "import":
+                    continue
+                target = self._target(
+                    stmt.import_module, stmt.import_level, module.dotted
+                )
+                if target and self.module_path(target) is not None:
+                    visit(target, stack + (name,))
+                else:
+                    external.append(_reconstruct_import(stmt))
+
+            if name not in self._emitted_modules:
+                self._emitted_modules.add(name)
+                order.append(
+                    IncludedModule(
+                        name, name.rpartition(".")[0], module.source, module.path
+                    )
+                )
+
+        visit(dotted, _stack)
+
+        # Only create packages that are not themselves one of the loaded modules
+        # (a package that has a src file is loaded, not stubbed).
+        loaded = {m.dotted for m in order} | self._emitted_modules
+        pkgs = sorted(
+            (p for p in packages if p not in loaded), key=lambda n: n.count(".")
+        )
+        return ModuleInclusion(order, pkgs, dotted.split(".")[0], external)

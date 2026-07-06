@@ -204,3 +204,30 @@ def test_run_externals_execute_before_module_level_use(tmp_path):
     )
     ns = run_notebook(str(nb), src_root=str(tmp_path / "src"))
     assert ns["result"] == 3
+
+
+def test_run_inlines_decorated_classes(tmp_path):
+    """Decorators are part of an inlined symbol's source (they live on the
+    lines *above* what ast.get_source_segment returns for the class node)."""
+    _write_module(
+        tmp_path,
+        "lib",
+        """
+        from dataclasses import dataclass
+
+        @dataclass(frozen=True)
+        class Point:
+            x: int
+            y: int
+        """,
+    )
+    nb = _write_nb(
+        tmp_path,
+        """
+        # %%
+        from lib import Point
+        p = Point(x=1, y=2)
+        """,
+    )
+    ns = run_notebook(str(nb), src_root=str(tmp_path / "src"))
+    assert ns["p"].y == 2
