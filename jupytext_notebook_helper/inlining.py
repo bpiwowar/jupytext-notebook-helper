@@ -422,6 +422,20 @@ class InternalModule:
             a = node.args
             header_nodes += [d for d in a.defaults]
             header_nodes += [d for d in a.kw_defaults if d is not None]
+            # Parameter / return annotations: evaluated eagerly in the
+            # enclosing scope before Python 3.14 (no dedicated `__annotate__`
+            # scope for symtable to report), so walk them explicitly. Under
+            # 3.14 this double-counts harmlessly.
+            args = [*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg]
+            header_nodes += [
+                arg.annotation
+                for arg in args
+                if arg is not None and arg.annotation is not None
+            ]
+            if node.returns is not None:
+                header_nodes.append(node.returns)
+        if isinstance(node, ast.AnnAssign) and node.annotation is not None:
+            header_nodes.append(node.annotation)
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             if node.value is not None:
                 header_nodes.append(node.value)

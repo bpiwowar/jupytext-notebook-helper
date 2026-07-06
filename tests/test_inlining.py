@@ -412,3 +412,29 @@ def test_module_inclusion_runs_side_effects(tmp_path):
     ns = {}
     exec(render_module_inclusion(inc, "lib", "lib"), ns)
     assert ns["lib"].MARKER == ["ran"]
+
+
+def test_annotation_only_dependencies_are_tracked(tmp_path):
+    """Parameter/return annotations are evaluated eagerly (in the enclosing
+    scope) before Python 3.14: a symbol used *only* in an annotation is still a
+    dependency of the function."""
+    from jupytext_notebook_helper.inlining import InternalResolver
+
+    path = tmp_path / "src" / "lib.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        textwrap.dedent(
+            """
+            from typing import Iterator, TypeVar
+
+            T = TypeVar("T")
+
+            def first(items: list[T]) -> Iterator[T]:
+                yield items[0]
+            """
+        )
+    )
+    resolver = InternalResolver(src_root=tmp_path / "src")
+    resolved = resolver.resolve("lib", [("first", "first")])
+    sources = "\n".join(block.source for block in resolved.blocks)
+    assert 'T = TypeVar("T")' in sources
