@@ -106,10 +106,12 @@ def _exec_cell(
         if not (imp.is_from and resolver.is_internal(imp.module, imp.level)):
             continue
         result = resolver.resolve(imp.module, imp.names)
-        for block in result.blocks:
-            pre_exec.append((block.source, block.origin.path, block.origin.lineno - 1))
+        # External imports first: inlined blocks may use them at module level
+        # (e.g. `ActionT = TypeVar(...)`), not only inside function bodies.
         for ext in result.external:
             pre_exec.append((ext, _SYNTHETIC_EXTERNAL, 0))
+        for block in result.blocks:
+            pre_exec.append((block.source, block.origin.path, block.origin.lineno - 1))
         for ln in range(imp.lineno, imp.end_lineno + 1):
             lines[ln - 1] = ""
 

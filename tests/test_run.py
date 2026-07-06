@@ -177,3 +177,30 @@ def test_run_nested_internal_modules(tmp_path):
     )
     ns = run_notebook(str(nb), src_root=str(tmp_path / "src"))
     assert ns["out"] == 31
+
+
+def test_run_externals_execute_before_module_level_use(tmp_path):
+    """An inlined symbol may use an external import at *module level* (not just
+    inside a function body): the external imports must be executed first."""
+    _write_module(
+        tmp_path,
+        "lib",
+        """
+        from typing import TypeVar
+
+        T = TypeVar("T")
+
+        def ident(x: T) -> T:
+            return x
+        """,
+    )
+    nb = _write_nb(
+        tmp_path,
+        """
+        # %%
+        from lib import ident
+        result = ident(3)
+        """,
+    )
+    ns = run_notebook(str(nb), src_root=str(tmp_path / "src"))
+    assert ns["result"] == 3
