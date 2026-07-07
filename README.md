@@ -58,8 +58,9 @@ def cosine(a, b):
 ```
 
 - `[[student]] … [[/student]]` — kept verbatim in the teacher version; in the
-  student version the body is replaced by a `# TODO` and `assert False, "Not
-  implemented yet"`, so the notebook still parses and points students at the work.
+  student version the body is replaced by the instruction (as a comment) and an
+  `assert False, 'Not implemented yet'`, so the notebook still parses and points
+  students at the work.
 - `[[remove]] … [[/remove]]` — instructor-only content stripped from everything
   handed out.
 - `[[assert]]`, `[[unindent]]`, and cell **tags** (`teacher`, `colab`,
