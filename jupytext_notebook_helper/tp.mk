@@ -68,8 +68,8 @@ DEPFILES      := $(NAMES:%=$(DEPDIR)/%.d)
 TESTED        := $(NAMES:%=$(TESTED_DIR)/%.tested)
 RESOLVED      := $(NAMES:%=$(RESOLVED_DIR)/%.resolved)
 
-.PHONY: help all notebooks teacher solution bundle check check-resolved \
-	check-bundle show-tests show-resolved clean
+.PHONY: help all notebooks teacher solution bundle check check-raw \
+	check-bundle show-tests show-raw clean
 help:
 	@echo "Practicals targets:"
 	@echo "  notebooks        student notebooks (local + Colab) + uv zip"
@@ -79,15 +79,16 @@ help:
 	@echo "  bundle           the uv-ready student zip only"
 	@echo "  check-bundle     verify the zip resolves with uv (no install)"
 	@echo "  all              notebooks + teacher"
-	@echo "  check            run every source as a script in TESTING_MODE (figures"
-	@echo "                   via imgcat), tracking pass/fail under $(TESTED_DIR)/"
+	@echo "  check            run every source with internal imports RESOLVED (the"
+	@echo "                   exact inlined code students get); TESTING_MODE, figures"
+	@echo "                   via imgcat, pass/fail under $(RESOLVED_DIR)/. This is the"
+	@echo "                   gate that matches the built notebooks."
 	@echo "  check:<name>     run a single source (e.g. make check:tp1-embeddings)"
-	@echo "  check-resolved   run every source with internal imports inlined (the"
-	@echo "                   exact code students get), tracking pass/fail; catches"
-	@echo "                   missing inlined dependencies that a plain 'check' hides"
-	@echo "  check-resolved:<name>  resolved run of a single source"
+	@echo "  check-raw        run every source as a plain script (imports full src/):"
+	@echo "                   faster/looser, for early debugging; misses inlining bugs"
+	@echo "  check-raw:<name> raw run of a single source"
 	@echo "  show-tests       show last 'check' pass/fail status per source"
-	@echo "  show-resolved    show last 'check-resolved' pass/fail status per source"
+	@echo "  show-raw         show last 'check-raw' pass/fail status per source"
 	@echo "  clean            remove generated notebooks, teacher/, zip, $(DEPDIR), $(TESTED_DIR)"
 	@echo ""
 	@echo "Sources: $(NAMES)"
@@ -178,56 +179,59 @@ check-bundle: $(ZIP)
 		echo "  FAIL: bundle does not resolve:"; sed 's/^/    /' $$tmp/err; rm -rf $$tmp; exit 1; \
 	fi
 
-# ---- powerful check: run each source as a script, track pass/fail ----
+# ---- check: run each source with internal imports RESOLVED (the default) ----
+# Executes exactly the inlined subset a student notebook will contain, so a
+# tree-shaking bug (a symbol a copied helper needs, or a module-level side
+# effect that was not inlined) surfaces here as a NameError / runtime error —
+# at the real source location. This is what students actually get, so it is the
+# default `check`. Use `check-raw` for the looser, faster script run.
 # `make check:<name>` runs a single source.
 check\:%:
-	@$(MAKE) $(TESTED_DIR)/$*.tested
+	@$(MAKE) $(RESOLVED_DIR)/$*.resolved
 
-$(TESTED_DIR)/%.tested: $(SOURCES_DIR)/%.py | $(TESTED_DIR)
-	@rm -f $(TESTED_DIR)/$*.failed $@
+$(RESOLVED_DIR)/%.resolved: $(SOURCES_DIR)/%.py | $(RESOLVED_DIR)
+	@rm -f $(RESOLVED_DIR)/$*.failed $@
 	@echo "== $* =="
-	@TESTING_MODE=full $(PYTHON) python $< \
+	@TESTING_MODE=full $(RUN) $< \
 		&& (touch $@ && printf '\033[32m  PASS %s\033[0m\n' "$*") \
-		|| (touch $(TESTED_DIR)/$*.failed && printf '\033[31m  FAIL %s\033[0m\n' "$*")
+		|| (touch $(RESOLVED_DIR)/$*.failed && printf '\033[31m  FAIL %s\033[0m\n' "$*")
 
-check: $(TESTED)
+check: $(RESOLVED)
 	@echo "Done — see 'make show-tests'"
 
 show-tests:
 	@printf "  %-28s %s\n" "source" "status"
 	@printf "  %-28s %s\n" "------" "------"
 	@for n in $(NAMES); do \
-		if [ -f "$(TESTED_DIR)/$$n.tested" ]; then s="[PASS]"; \
-		elif [ -f "$(TESTED_DIR)/$$n.failed" ]; then s="[FAIL]"; \
+		if [ -f "$(RESOLVED_DIR)/$$n.resolved" ]; then s="[PASS]"; \
+		elif [ -f "$(RESOLVED_DIR)/$$n.failed" ]; then s="[FAIL]"; \
 		else s="[ -- ]"; fi; \
 		printf "  %-28s %s\n" "$$n" "$$s"; \
 	done
 
-# ---- intermediate check: run each source with internal imports resolved ----
-# Executes exactly the inlined subset a student notebook will contain, so a
-# tree-shaking bug (a symbol a copied helper needs but that was not copied)
-# surfaces here as a NameError — at the real source location. A plain `check`
-# imports the whole src/ module and so cannot catch this.
-# `make check-resolved:<name>` runs a single source.
-check-resolved\:%:
-	@$(MAKE) $(RESOLVED_DIR)/$*.resolved
+# ---- check-raw: run each source as a plain script (imports the full src/ ----
+# module). Faster and looser than `check`; handy for early debugging, but it
+# CANNOT catch inlining / tree-shaking bugs (the whole module is importable).
+# `make check-raw:<name>` runs a single source.
+check-raw\:%:
+	@$(MAKE) $(TESTED_DIR)/$*.tested
 
-$(RESOLVED_DIR)/%.resolved: $(SOURCES_DIR)/%.py | $(RESOLVED_DIR)
-	@rm -f $(RESOLVED_DIR)/$*.failed $@
-	@echo "== $* (resolved imports) =="
-	@TESTING_MODE=full $(RUN) $< \
+$(TESTED_DIR)/%.tested: $(SOURCES_DIR)/%.py | $(TESTED_DIR)
+	@rm -f $(TESTED_DIR)/$*.failed $@
+	@echo "== $* (raw) =="
+	@TESTING_MODE=full $(PYTHON) python $< \
 		&& (touch $@ && printf '\033[32m  PASS %s\033[0m\n' "$*") \
-		|| (touch $(RESOLVED_DIR)/$*.failed && printf '\033[31m  FAIL %s\033[0m\n' "$*")
+		|| (touch $(TESTED_DIR)/$*.failed && printf '\033[31m  FAIL %s\033[0m\n' "$*")
 
-check-resolved: $(RESOLVED)
-	@echo "Done — see 'make show-resolved'"
+check-raw: $(TESTED)
+	@echo "Done — see 'make show-raw'"
 
-show-resolved:
+show-raw:
 	@printf "  %-28s %s\n" "source" "status"
 	@printf "  %-28s %s\n" "------" "------"
 	@for n in $(NAMES); do \
-		if [ -f "$(RESOLVED_DIR)/$$n.resolved" ]; then s="[PASS]"; \
-		elif [ -f "$(RESOLVED_DIR)/$$n.failed" ]; then s="[FAIL]"; \
+		if [ -f "$(TESTED_DIR)/$$n.tested" ]; then s="[PASS]"; \
+		elif [ -f "$(TESTED_DIR)/$$n.failed" ]; then s="[FAIL]"; \
 		else s="[ -- ]"; fi; \
 		printf "  %-28s %s\n" "$$n" "$$s"; \
 	done

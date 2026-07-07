@@ -1,30 +1,114 @@
 # jupytext-notebook-helper
 
-Small runtime helpers for teaching notebooks written in the jupytext *percent*
-format and built with `jupytext-filter` (student/teacher/colab versions).
+**Author your teaching notebooks once, in plain Python, and generate every
+version you hand out — while a build that actually *runs* the code keeps you
+honest.**
 
-Extracted from `master_mind.teaching.utils` so it can be reused across courses
-without pulling in the whole master-mind framework.
+## Why
+
+A single practical (*TP*) usually has to exist in several shapes at once:
+
+- a **teacher** notebook with the full solutions,
+- a **student** notebook where those solutions are blanked out,
+- a **Colab** variant that installs its own dependencies,
+- a **local** variant shipped with a pinned `uv` environment,
+- optionally a **solution** hand-out (solutions kept, instructor scaffolding gone).
+
+Maintaining those by hand means copy-pasting between notebooks, re-blanking
+answers, chasing `pip install` lines, and discovering *in front of the class*
+that a cell no longer runs. Notebooks are also miserable to diff and review in
+git.
+
+This project takes a different approach: **you write one source file per TP in
+the jupytext *percent* format** — an ordinary, diffable, lintable `.py` file —
+annotate it with a few lightweight markers, and a build step produces all the
+variants above. The same build can *execute* each notebook (at three levels of
+fidelity) so a broken example fails on your machine, not the student's.
+
+## The idea in one picture
+
+```
+                         ┌─ teacher.ipynb        (solutions kept)
+   tp1.py   ──filter──▶  ├─ tp1.ipynb            (solutions blanked)
+ (py:percent)            ├─ tp1.colab.ipynb      (+ auto %pip install cell)
+                         └─ solution.ipynb        (optional corrigé)
+        │
+        └─ + uv bundle (pyproject + uv.lock + notebooks) for a reproducible
+             local install
+```
+
+You author in `tp1.py`; students never see the machinery.
+
+## What you write
+
+An ordinary percent notebook, with a small marker vocabulary interpreted by the
+filter (`python -m jupytext_notebook_helper.filter`):
+
+```python
+# %% [markdown]
+# ## Exercise 1 — cosine similarity
+
+# %%
+import numpy as np
+
+def cosine(a, b):
+    # [[student]] Return the cosine similarity of two vectors
+    return a @ b / (np.linalg.norm(a) * np.linalg.norm(b))
+    # [[/student]]
+```
+
+- `[[student]] … [[/student]]` — kept verbatim in the teacher version; in the
+  student version the body is replaced by a `# TODO` and `assert False, "Not
+  implemented yet"`, so the notebook still parses and points students at the work.
+- `[[remove]] … [[/remove]]` — instructor-only content stripped from everything
+  handed out.
+- `[[assert]]`, `[[unindent]]`, and cell **tags** (`teacher`, `colab`,
+  `not-colab`) gate content per variant.
+- `# [[imports]]` — optional marker choosing where the gathered import block lands.
+
+Because the source is just Python, it lints, formats, and diffs like any other
+file, and you never keep parallel copies in sync by hand.
+
+## What you get
+
+Beyond the variant generation, the runtime helpers and build integrate a few
+things that otherwise bite you late:
+
+- **Imports are gathered automatically** from wherever you wrote them — put each
+  `import` next to the code that needs it (see below).
+- **Internal library code is inlined** so a self-contained student notebook
+  carries exactly the helper functions it uses — nothing more.
+- **Colab gets a pinned `%pip install` cell** generated from `uv.lock`, so the
+  first cell just works.
+- **Everything is testable** at three fidelity levels (`make check` = resolved
+  inlined subset, `make check-raw` = plain script, and the real notebook build),
+  catching missing
+  dependencies and broken cells before students do.
+
+## Runtime helpers
+
+A tiny import surface, meant for a **teacher-only** cell — students never see the
+test-mode machinery and the package is not required on Colab:
 
 ```python
 from jupytext_notebook_helper import *   # test_mode, skip_plots, print_header, is_notebook
 ```
 
 - `test_mode` / `skip_plots` — driven by the `TESTING_MODE` env var
-  (`off` | `on` | `full`).
-- `print_header(title)` — formatted header when run as a script;
+  (`off` | `on` | `full`): reduce datasets/training when testing, and disable GUI
+  plots in `full`.
+- `print_header(title)` — a formatted header when run as a script;
   jupytext-filter turns it into a markdown header in notebooks.
 - On script execution (e.g. `make check`), `matplotlib.pyplot.show()` is patched
   to render figures inline in the terminal via `imgcat`.
 
-Intended to be imported from a **teacher-only** cell: students never see the
-test-mode machinery, and the package is not required on Colab.
+The package was extracted from `master_mind.teaching.utils` so it can be reused
+across courses without pulling in the whole master-mind framework.
 
 ## Imports in the build
 
-The filter (`python -m jupytext_notebook_helper.filter`) manages imports by
-*parsing* the source — no explicit `imports`/`copy` cell tags are needed
-anymore (they still work but warn that they are redundant).
+The filter manages imports by *parsing* the source — no explicit `imports`/`copy`
+cell tags are needed anymore (they still work but warn that they are redundant).
 
 **Imports can live anywhere; they are gathered automatically.** You no longer
 have to keep imports in a dedicated cell (the old `imports`-tagged section):
@@ -121,17 +205,36 @@ top. Non-Colab builds (no `--colab`) get no install cell.
 
 ## Testing: three levels
 
-- `make check` — runs each source **as a script**, importing internal helpers
-  normally from `src/`. Fast, but because the whole module is importable it
-  cannot reveal a *missing* inlined dependency.
-- `make check-resolved` (`python -m jupytext_notebook_helper.run`) — runs each
-  source with internal imports **resolved to the inlined subset**, i.e. exactly
-  the code a student notebook will contain. A tree-shaking bug then surfaces as
-  a `NameError` — reported at the **real** source location, because every chunk
-  is compiled against the file it came from (notebook cell → `.py`; inlined
-  symbol → its `src/` module).
+- `make check` (the default; `python -m jupytext_notebook_helper.run`) — runs
+  each source with internal imports **resolved to the inlined subset**, i.e.
+  exactly the code a student notebook will contain. A tree-shaking bug (a symbol
+  a copied helper needs, or a module-level side effect that was not inlined)
+  surfaces as a `NameError` / runtime error — reported at the **real** source
+  location, because every chunk is compiled against the file it came from
+  (notebook cell → `.py`; inlined symbol → its `src/` module). This is the gate
+  that matches the built notebooks, so it is the default.
+- `make check-raw` — runs each source **as a plain script**, importing internal
+  helpers normally from `src/`. Faster and looser; handy for early debugging,
+  but because the whole module is importable it **cannot** reveal a missing
+  inlined dependency (use `check` for that).
 - Building the notebook itself is the final level.
 
-Both `check` and `check-resolved` accept a single source, e.g.
-`make check-resolved:tp1-embeddings`, and record pass/fail (`make show-tests`
-/ `make show-resolved`).
+Both accept a single source, e.g. `make check:tp1-embeddings` /
+`make check-raw:tp1-embeddings`, and record pass/fail (`make show-tests` /
+`make show-raw`).
+
+## Wiring it into a course
+
+Reusable make rules ship with the package. Include them from a project
+`Makefile` after setting any project-specific variables:
+
+```makefile
+ZIP      := ../static/tp/tp-mycourse-uv.zip
+PIP_ARGS := --uv-root .. --pip-force-include sentencepiece
+include $(shell uv run python -m jupytext_notebook_helper.tpmk)
+```
+
+This generates the four variants per source plus a `uv` bundle
+(`pyproject` + `uv.lock` + local notebooks + README), and an optional
+`make solution` target for a student-facing corrigé. See the header of
+`jupytext_notebook_helper/tp.mk` for the full list of configurable variables.
