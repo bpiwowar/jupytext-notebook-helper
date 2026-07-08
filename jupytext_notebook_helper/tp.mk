@@ -68,17 +68,17 @@ DEPFILES      := $(NAMES:%=$(DEPDIR)/%.d)
 TESTED        := $(NAMES:%=$(TESTED_DIR)/%.tested)
 RESOLVED      := $(NAMES:%=$(RESOLVED_DIR)/%.resolved)
 
-.PHONY: help all notebooks teacher solution bundle check check-raw \
+.PHONY: help all student notebooks teacher solution bundle check check-raw \
 	check-bundle show-tests show-raw clean
 help:
 	@echo "Practicals targets:"
-	@echo "  notebooks        student notebooks (local + Colab) + uv zip"
+	@echo "  student          student notebooks (local + Colab) + uv zip"
 	@echo "  teacher          teacher notebooks (local + Colab, with solutions)"
 	@echo "  solution         student-facing solution / corrigé (local + Colab, with"
 	@echo "                   solutions, no instructor cells/markers/tag comments)"
 	@echo "  bundle           the uv-ready student zip only"
 	@echo "  check-bundle     verify the zip resolves with uv (no install)"
-	@echo "  all              notebooks + teacher"
+	@echo "  all              student + teacher"
 	@echo "  check            run every source with internal imports RESOLVED (the"
 	@echo "                   exact inlined code students get); TESTING_MODE, figures"
 	@echo "                   via imgcat, pass/fail under $(RESOLVED_DIR)/. This is the"
@@ -93,8 +93,9 @@ help:
 	@echo ""
 	@echo "Sources: $(NAMES)"
 
-all: notebooks teacher
-notebooks: $(STUDENT_LOCAL) $(STUDENT_COLAB) $(ZIP)
+all: student teacher
+student: $(STUDENT_LOCAL) $(STUDENT_COLAB) $(ZIP)
+notebooks: student  # backward-compatible alias
 teacher: $(TEACHER_LOCAL) $(TEACHER_COLAB)
 solution: $(SOLUTION_LOCAL) $(SOLUTION_COLAB)
 bundle: $(ZIP)
