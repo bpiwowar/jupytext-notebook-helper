@@ -57,6 +57,13 @@ re_assert = re.compile(r"""^(\s*)#(?:.*)\[\[assert\]\]\s*(\S.*)$""", re.IGNORECA
 re_remove_start = re.compile(r""".*\[\[REMOVE\]\]""", re.IGNORECASE)
 re_remove_end = re.compile(r""".*\[\[/REMOVE\]\]""", re.IGNORECASE)
 
+#: Cell marker: leave this cell's imports where they are (see
+#: `rewrite_cell_imports`). For cells that must import at a precise point --
+#: e.g. setting an environment variable before the first `import transformers`.
+re_keep_imports = re.compile(
+    r"""^\s*#\s*\[\[keep-imports\]\]\s*$""", re.IGNORECASE | re.MULTILINE
+)
+
 re_unindent_start = re.compile(r"""(\s+)#.*\[\[unindent\]\]""", re.IGNORECASE)
 re_unindent_end = re.compile(r"""(\s+)#.*\[\[/unindent\]\]""", re.IGNORECASE)
 
@@ -309,6 +316,13 @@ def get_imported_packages(imports: Imports) -> set:
         package = IMPORT_TO_PACKAGE.get(top_level, top_level)
         imported.add(package.lower())
 
+    # Imports kept in place by `[[keep-imports]]`: not emitted with the others,
+    # but their packages still have to be installed.
+    for module in imports.packaging_only:
+        top_level = module.split(".")[0]
+        package = IMPORT_TO_PACKAGE.get(top_level, top_level)
+        imported.add(package.lower())
+
     return imported
 
 
@@ -393,7 +407,7 @@ def _marker_excluded_ranges(source: str) -> set:
     return excluded
 
 
-def rewrite_cell_imports(source: str, imports: Imports) -> str:
+def rewrite_cell_imports(source: str, imports: Imports, keep: bool = False) -> str:
     """Move external imports to the shared cell and inline internal ones.
 
     Top-level ``import``/``from`` statements are removed from the cell: external
@@ -401,6 +415,11 @@ def rewrite_cell_imports(source: str, imports: Imports) -> str:
     marker); ``from <internal> import ...`` statements are replaced in place by
     the requested symbols plus their transitive dependencies, with the external
     imports the inlined code needs folded back into ``imports``.
+
+    With ``keep`` (the ``[[keep-imports]]`` marker), the cell is left untouched:
+    its imports run where they are written, which is what a cell that has to
+    prepare the environment *before* a heavy import needs. They are only noted
+    so the install cell still pins them.
     """
     try:
         parsed = find_imports(source)
@@ -409,6 +428,22 @@ def rewrite_cell_imports(source: str, imports: Imports) -> str:
         # its imports alone.
         return source
     if not parsed:
+        return source
+
+    if keep:
+        for imp in parsed:
+            modules = (
+                [imp.module or ""] if imp.is_from else [orig for orig, _ in imp.names]
+            )
+            for module in modules:
+                if resolver.is_internal(module, imp.level if imp.is_from else 0):
+                    logging.warning(
+                        "[[keep-imports]]: internal module %s is imported but not "
+                        "inlined; the notebook will not be self-contained",
+                        module,
+                    )
+                else:
+                    imports.note_for_packaging(module)
         return source
 
     excluded = _marker_excluded_ranges(source)
@@ -580,7 +615,11 @@ def process(  # noqa: C901
         if cell_type == "markdown":
             process_markdown(path, cell["source"], lines, deps)
         else:
-            cell["source"] = rewrite_cell_imports(cell["source"], imports)
+            cell["source"] = rewrite_cell_imports(
+                cell["source"],
+                imports,
+                keep=bool(re_keep_imports.search(cell["source"])),
+            )
             # In teacher mode, show cell tags as a comment
             logging.debug(
                 "Cell %d: cell_type=%s, teacher_mode=%s, tags=%s, metadata=%s",
@@ -661,6 +700,9 @@ def process(  # noqa: C901
                     remove = False
                     if teacher_mode:
                         lines.append(line[unindent:])
+
+                elif re_keep_imports.match(line):
+                    pass  # build marker, never shown
 
                 elif not teacher_mode and (m := re_unindent_start.match(line)):
                     assert not unindent, "No [[/unindent]] tag"

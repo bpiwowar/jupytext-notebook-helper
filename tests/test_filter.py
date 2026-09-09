@@ -499,3 +499,60 @@ def test_colab_explicit_pip_cell_not_duplicated(tmp_path):
         _cell_source(c) for c in nb["cells"] if "%pip install" in _cell_source(c)
     ]
     assert len(pip_cells) == 1  # explicit `pip` cell placed it; no auto-insert
+
+
+# --------------------------------------------------------------------------- #
+# [[keep-imports]]
+# --------------------------------------------------------------------------- #
+
+KEEP_IMPORTS_NB = textwrap.dedent(
+    """
+    # %%
+    # [[keep-imports]]
+    import os
+
+    os.environ.setdefault("USE_TF", "0")
+
+    # %%
+    # [[imports]]
+
+    # %%
+    import numpy as np
+    x = np.zeros(3)
+    """
+).lstrip()
+
+
+def test_keep_imports_leaves_the_cell_alone(tmp_path):
+    src = tmp_path / "nb.py"
+    src.write_text(KEEP_IMPORTS_NB)
+    cells = [_cell_source(c) for c in _run([], src)["cells"]]
+    # The marked cell keeps its import, in place and ahead of the shared cell...
+    assert cells[0] == 'import os\n\nos.environ.setdefault("USE_TF", "0")'
+    # ...and is not re-emitted with the gathered ones.
+    assert "import numpy as np" in cells[1]
+    assert "import os" not in cells[1]
+
+
+def test_keep_imports_still_pins_the_package(tmp_path):
+    _write_uv(tmp_path, {"numpy": "2.0.0", "torch": "2.6.1"})
+    src = tmp_path / "sample.py"
+    src.write_text(
+        textwrap.dedent(
+            """
+            # %%
+            # [[keep-imports]]
+            import torch
+
+            # %%
+            import numpy as np
+            x = np.zeros(3)
+            """
+        ).lstrip()
+    )
+    sources = [
+        _cell_source(c)
+        for c in _run(["--colab", "--uv-root", str(tmp_path)], src)["cells"]
+    ]
+    assert "torch==2.6.*" in sources[0]  # kept in place, still installed
+    assert "numpy==2.0.*" in sources[0]

@@ -80,6 +80,9 @@ class Imports:
         self._module_aliases: Dict[str, Set[str]] = {}
         #: (module, symbol) -> set of distinct aliases
         self._symbol_aliases: Dict[Tuple[str, str], Set[str]] = {}
+        #: modules imported by cells whose imports stay in place
+        #: (``[[keep-imports]]``): never re-emitted, but still packaged
+        self.packaging_only: Set[str] = set()
 
     def empty(self) -> bool:
         return not self.imports and not self.imports_from
@@ -134,6 +137,16 @@ class Imports:
                         self.imports_from.setdefault(module, {})[name] = symbol.name
             else:
                 raise ResolveError(f"Cannot interpret import statement: {ast.dump(st)}")
+
+    def note_for_packaging(self, module: str) -> None:
+        """Record a module that is imported but deliberately not gathered.
+
+        Imports left in place by ``[[keep-imports]]`` are not re-emitted with
+        the others, but the packages they need must still be pinned in the
+        generated install cell.
+        """
+        if module:
+            self.packaging_only.add(module)
 
     def alias_warnings(self) -> List[str]:
         """Return a warning message for every import pulled in under >1 alias."""

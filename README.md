@@ -66,6 +66,8 @@ def cosine(a, b):
 - `[[assert]]`, `[[unindent]]`, and cell **tags** (`teacher`, `colab`,
   `not-colab`) gate content per variant.
 - `# [[imports]]` — optional marker choosing where the gathered import block lands.
+- `# [[keep-imports]]` — opt out of gathering for one cell, when its imports
+  must run exactly where they are written.
 
 Because the source is just Python, it lints, formats, and diffs like any other
 file, and you never keep parallel copies in sync by hand.
@@ -144,6 +146,26 @@ logs a warning. Imports inside `[[remove]]` / `[[student]]` blocks are left in
 place, so teacher-only imports never leak into the shared cell. Imports nested
 inside a function or `if` are also left alone — only module-level (top-level)
 imports are gathered.
+
+**`# [[keep-imports]]` opts a cell out of gathering.** Some cells have to import
+at a precise point — typically to set up the environment before a heavy import
+happens elsewhere. Mark such a cell and its imports stay exactly where you wrote
+them:
+
+```python
+# %%
+# [[keep-imports]]
+# `transformers` refuses to start under Keras 3 unless TF is disabled *before*
+# the first import — which happens in the gathered cell below.
+import os
+
+os.environ.setdefault("USE_TF", "0")
+```
+
+The marker line itself is dropped from every variant, and the packages the cell
+imports are still pinned in the Colab install cell. Internal (`src/`) modules
+are *not* inlined in such a cell — importing one there is reported as a warning,
+since the generated notebook would no longer be self-contained.
 
 **Internal library imports are inlined (with dependency tracking).** An import
 whose module resolves to a file under `--src-root` (default `src/`) is treated
