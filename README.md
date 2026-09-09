@@ -281,3 +281,23 @@ This generates the four variants per source plus a `uv` bundle
 (`pyproject` + `uv.lock` + local notebooks + README), and an optional
 `make solution` target for a student-facing corrigé. See the header of
 `jupytext_notebook_helper/tp.mk` for the full list of configurable variables.
+
+### Shipping an environment-only bundle
+
+Two variables control what goes into `$(ZIP)`:
+
+```makefile
+BUNDLE_NOTEBOOKS := no                      # default: yes
+BUNDLE_EXTRA     := src/mylib/resources.py  # extra files at the zip root
+```
+
+`BUNDLE_NOTEBOOKS=no` drops the `notebooks/` directory from the archive, so it
+only carries the student `pyproject.toml` + `uv.lock` + `README.md` (+ whatever
+`BUNDLE_EXTRA` lists). Students can then download it early to build the
+environment and pre-download models/datasets — typically with a standalone
+script shipped through `BUNDLE_EXTRA` — while the notebooks are still being
+written and handed out separately.
+
+The archive stays byte-stable across notebook edits: the generated student
+`pyproject.toml` is only rewritten when the set of packages actually changes, so
+the zip is rebuilt only when the environment changes, not on every build.

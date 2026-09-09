@@ -12,6 +12,8 @@
 #                            -> $(TEACHER_DIR)/<name>.ipynb         teacher . local (solutions)
 #                            -> $(TEACHER_DIR)/<name>.colab.ipynb   teacher . Colab
 #                            +  $(ZIP) = pyproject + uv.lock + local notebooks + README
+#                                       (BUNDLE_NOTEBOOKS=no drops the notebooks,
+#                                        BUNDLE_EXTRA adds files at the zip root)
 #
 # Optional `make solution` adds a student-facing corrigé (solutions kept, but no
 # instructor cells / [[...]] markers / tag comments):
@@ -49,9 +51,24 @@ STUDENT_REQUIRES_PYTHON ?= >=3.10, <3.12
 STUDENT_BASE_DEPS     ?= jupyter jupyterlab ipywidgets
 BUNDLE_PYPROJECT      ?= $(STUDENT_ENV_DIR)/pyproject.toml
 BUNDLE_LOCK           ?= $(STUDENT_ENV_DIR)/uv.lock
+# Ship the student notebooks inside the bundle (default). Set to `no` for an
+# environment-only archive — uv project + README (+ $(BUNDLE_EXTRA)) — that
+# students can download once to pre-build the env / pre-download models while
+# the notebooks are still being written and distributed separately.
+BUNDLE_NOTEBOOKS      ?= yes
+# Extra files copied at the ROOT of the bundle, e.g. a standalone pre-download
+# script: BUNDLE_EXTRA := src/mylib/resources.py
+BUNDLE_EXTRA          ?=
 # Passed to the filter for the Colab install cell; --uv-root tells it where
 # uv.lock/pyproject.toml live (relative to the build dir).
 PIP_ARGS       ?= --uv-root $(ROOT)
+
+# `yes` unless BUNDLE_NOTEBOOKS says otherwise (no/false/0/off, any case).
+ifeq ($(filter $(BUNDLE_NOTEBOOKS),no No NO false False FALSE 0 off Off OFF),)
+BUNDLE_WITH_NOTEBOOKS := yes
+else
+BUNDLE_WITH_NOTEBOOKS :=
+endif
 
 FILTER := $(PYTHON) python -m jupytext_notebook_helper.filter --src-root $(SRC_ROOT)
 RUN    := $(PYTHON) python -m jupytext_notebook_helper.run --src-root $(SRC_ROOT)
@@ -76,7 +93,7 @@ help:
 	@echo "  teacher          teacher notebooks (local + Colab, with solutions)"
 	@echo "  solution         student-facing solution / corrigé (local + Colab, with"
 	@echo "                   solutions, no instructor cells/markers/tag comments)"
-	@echo "  bundle           the uv-ready student zip only"
+	@echo "  bundle           the uv-ready student zip only$(if $(BUNDLE_WITH_NOTEBOOKS),, (env only, no notebooks))"
 	@echo "  check-bundle     verify the zip resolves with uv (no install)"
 	@echo "  all              student + teacher"
 	@echo "  check            run every source with internal imports RESOLVED (the"
@@ -146,29 +163,39 @@ $(STUDENT_ENV_DIR)/pyproject.toml: $(STUDENT_COLAB)
 	  echo 'requires-python = "$(STUDENT_REQUIRES_PYTHON)"'; \
 	  echo 'dependencies = ['; \
 	  { cat $(DEPDIR)/*.pkgs 2>/dev/null; printf '%s\n' $(STUDENT_BASE_DEPS); } \
-	    | sort -u | sed 's/.*/    "&",/'; \
+	    | sed '/^[[:space:]]*$$/d' | sort -u | sed 's/.*/    "&",/'; \
 	  echo ']'; \
 	  echo ''; \
 	  echo '[tool.uv]'; \
 	  echo 'package = false'; \
-	} > $@
-	@echo "Generated $@ from notebook imports ($(DEPDIR)/*.pkgs + base)"
+	} > $@.tmp
+	@if cmp -s $@.tmp $@; then rm -f $@.tmp; \
+	else mv $@.tmp $@; \
+	  echo "Generated $@ from notebook imports ($(DEPDIR)/*.pkgs + base)"; fi
 
 $(STUDENT_ENV_DIR)/uv.lock: $(STUDENT_ENV_DIR)/pyproject.toml
 	cd $(STUDENT_ENV_DIR) && uv lock
 
-# Self-contained uv bundle for local student use.
-$(ZIP): $(STUDENT_LOCAL) $(BUNDLE_PYPROJECT) $(BUNDLE_LOCK) $(STUDENT_README)
+# Self-contained uv bundle for local student use. The notebooks are only a
+# prerequisite when they are actually shipped (BUNDLE_NOTEBOOKS): otherwise the
+# archive is env-only and must stay stable while the notebooks are edited.
+BUNDLE_NOTEBOOK_DEPS := $(if $(BUNDLE_WITH_NOTEBOOKS),$(STUDENT_LOCAL))
+
+$(ZIP): $(BUNDLE_NOTEBOOK_DEPS) $(BUNDLE_PYPROJECT) $(BUNDLE_LOCK) $(STUDENT_README) $(BUNDLE_EXTRA)
 	@rm -rf $(BUNDLE_DIR)
-	@mkdir -p $(BUNDLE_DIR)/notebooks $(dir $(ZIP))
+	@mkdir -p $(BUNDLE_DIR) $(dir $(ZIP))
 	cp $(BUNDLE_PYPROJECT) $(BUNDLE_DIR)/pyproject.toml
 	cp $(BUNDLE_LOCK) $(BUNDLE_DIR)/uv.lock
-	cp $(STUDENT_LOCAL) $(BUNDLE_DIR)/notebooks/
 	cp $(STUDENT_README) $(BUNDLE_DIR)/README.md
+ifdef BUNDLE_WITH_NOTEBOOKS
+	@mkdir -p $(BUNDLE_DIR)/notebooks
+	cp $(STUDENT_LOCAL) $(BUNDLE_DIR)/notebooks/
+endif
+	$(if $(BUNDLE_EXTRA),cp $(BUNDLE_EXTRA) $(BUNDLE_DIR)/)
 	rm -f $(ZIP)
 	cd $(BUNDLE_DIR) && zip -r -q $(abspath $(ZIP)) . && cd -
 	@rm -rf $(BUNDLE_DIR)
-	@echo "Built $(ZIP)"
+	@echo "Built $(ZIP)$(if $(BUNDLE_WITH_NOTEBOOKS),, (no notebooks))"
 
 # Resolution test for the bundle: unzip and verify `uv` can resolve the env from
 # the shipped pyproject + uv.lock — WITHOUT installing anything (`uv lock --check`).
