@@ -98,12 +98,17 @@ from jupytext_notebook_helper import *   # test_mode, skip_plots, print_header, 
 ```
 
 - `test_mode` / `skip_plots` — driven by the `TESTING_MODE` env var
-  (`off` | `on` | `full`): reduce datasets/training when testing, and disable GUI
-  plots in `full`.
+  (`off` | `on` | `full`): reduce datasets/training when testing, and drop every
+  figure in `full`.
+- `SKIP_PLOTS=1` (`1`/`true`/`yes`/`on`) — drop the figures **without** touching
+  `test_mode`, for a full-size run whose log stays readable: each inline figure
+  is a few hundred kB of base64.
 - `print_header(title)` — a formatted header when run as a script;
   jupytext-filter turns it into a markdown header in notebooks.
 - On script execution (e.g. `make check`), `matplotlib.pyplot.show()` is patched
-  to render figures inline in the terminal via `imgcat`.
+  to render figures inline in the terminal via `imgcat` — unless `skip_plots`,
+  which is now honoured before the inline rendering (until 0.5.0 `full` still
+  wrote every figure to the terminal whenever `imgcat` was installed).
 
 The package was extracted from `master_mind.teaching.utils` so it can be reused
 across courses without pulling in the whole master-mind framework.

@@ -19,7 +19,11 @@ Usage in a (teacher-only) notebook cell::
 Environment variable ``TESTING_MODE``:
   - ``"off"`` (default): full datasets, plots shown normally;
   - ``"on"``: reduced datasets/training, plots still shown;
-  - ``"full"``: reduced datasets/training, GUI plots disabled (Agg backend).
+  - ``"full"``: reduced datasets/training, no figures at all.
+
+Environment variable ``SKIP_PLOTS`` (``1``/``true``/``yes``/``on``): suppress every
+figure while leaving ``test_mode`` alone — for a full-size run whose log you want
+readable (inline images are base64 blobs of a few hundred kB each).
 """
 
 import io
@@ -32,7 +36,11 @@ __all__ = ["test_mode", "skip_plots", "print_header", "is_notebook"]
 # Parse testing mode from environment
 test_mode_value = os.environ.get("TESTING_MODE", "off").lower()
 test_mode = test_mode_value in ["on", "full"]
-skip_plots = test_mode_value == "full"
+# Figures can be suppressed on their own: a full-size run is often exactly when
+# the log matters most, and every inline figure is a base64 blob in it.
+skip_plots = test_mode_value == "full" or os.environ.get(
+    "SKIP_PLOTS", ""
+).lower() in ("1", "true", "yes", "on")
 
 if test_mode:
     print(f"#># Testing mode: {test_mode_value}", file=sys.stderr)  # noqa: T201
@@ -92,6 +100,12 @@ def _patch_matplotlib():
     _original_show = plt.show
 
     def _patched_show(*args, **kwargs):
+        if skip_plots:
+            # Avant tout rendu : imgcat écrivait la figure dans le terminal même
+            # en mode « figures désactivées ».
+            plt.close("all")
+            return
+
         fig = plt.gcf()
         if fig.axes:
             buf = io.BytesIO()
@@ -106,10 +120,7 @@ def _patch_matplotlib():
                 return
             except ImportError:
                 print("[Plot rendered - install 'imgcat' for terminal preview]")  # noqa: T201
-        if not skip_plots:
-            _original_show(*args, **kwargs)
-        else:
-            plt.close("all")
+        _original_show(*args, **kwargs)
 
     plt.show = _patched_show
 
