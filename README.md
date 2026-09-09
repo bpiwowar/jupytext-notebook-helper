@@ -246,6 +246,21 @@ Both accept a single source, e.g. `make check:tp1-embeddings` /
 `make check-raw:tp1-embeddings`, and record pass/fail (`make show-tests` /
 `make show-raw`).
 
+### Interactively: `make lab` / `make lab-test`
+
+`make lab` builds the teacher notebooks and opens JupyterLab on them;
+`make lab-test` does the same with `TESTING_MODE=on` exported to the server, so
+every kernel runs on reduced datasets/training **with plots still shown** (unlike
+`check`, which uses `full` and disables them). Only the teacher variant carries
+the `from jupytext_notebook_helper import *` cell, so this is the only build
+where `test_mode` exists.
+
+The mode is read at import, hence fixed per kernel: restart the kernel to pick up
+a change, restart the server to change the value. Override `LAB_DIR`, `LAB` or
+`LAB_TEST_MODE` to point elsewhere (e.g. `make lab LAB_DIR=solution`).
+Edits made in Lab are **not** written back to `sources/` — the notebooks are
+build outputs.
+
 ## Wiring it into a course
 
 Reusable make rules ship with the package. Include them from a project

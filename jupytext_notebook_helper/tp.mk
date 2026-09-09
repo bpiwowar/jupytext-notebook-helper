@@ -69,7 +69,7 @@ TESTED        := $(NAMES:%=$(TESTED_DIR)/%.tested)
 RESOLVED      := $(NAMES:%=$(RESOLVED_DIR)/%.resolved)
 
 .PHONY: help all student notebooks teacher solution bundle check check-raw \
-	check-bundle show-tests show-raw clean
+	check-bundle show-tests show-raw lab lab-test clean
 help:
 	@echo "Practicals targets:"
 	@echo "  student          student notebooks (local + Colab) + uv zip"
@@ -89,6 +89,9 @@ help:
 	@echo "  check-raw:<name> raw run of a single source"
 	@echo "  show-tests       show last 'check' pass/fail status per source"
 	@echo "  show-raw         show last 'check-raw' pass/fail status per source"
+	@echo "  lab              JupyterLab on the teacher notebooks (built first)"
+	@echo "  lab-test         same, with TESTING_MODE=$(LAB_TEST_MODE): reduced"
+	@echo "                   datasets/training, plots still shown"
 	@echo "  clean            remove generated notebooks, teacher/, zip, $(DEPDIR), $(TESTED_DIR)"
 	@echo ""
 	@echo "Sources: $(NAMES)"
@@ -236,6 +239,29 @@ show-raw:
 		else s="[ -- ]"; fi; \
 		printf "  %-28s %s\n" "$$n" "$$s"; \
 	done
+
+# ---- lab: JupyterLab on the built teacher notebooks ----
+# Only the teacher variant keeps the `from jupytext_notebook_helper import *`
+# cell, so `test_mode` (and the [[remove]] blocks that use it) exist there and
+# nowhere else — hence $(LAB_DIR) defaults to $(TEACHER_DIR).
+#
+# `lab-test` exports TESTING_MODE for the whole server, and the helper reads it
+# at import: the mode is therefore fixed per *kernel* (restart the kernel after
+# changing your mind, restart the server to change the value). `on`, not `full`
+# as in `check`: reduced datasets and training, but plots must stay visible when
+# working interactively.
+#
+# Note that editing a notebook in Lab does NOT write back to $(SOURCES_DIR):
+# $(LAB_DIR) holds build outputs, overwritten as soon as the source is newer.
+LAB_DIR       ?= $(TEACHER_DIR)
+LAB           ?= $(PYTHON) jupyter lab
+LAB_TEST_MODE ?= on
+
+lab: $(TEACHER_LOCAL)
+	$(LAB) $(LAB_DIR)
+
+lab-test: $(TEACHER_LOCAL)
+	TESTING_MODE=$(LAB_TEST_MODE) $(LAB) $(LAB_DIR)
 
 clean:
 	@rm -rf $(TEACHER_DIR) $(SOLUTION_DIR) $(DEPDIR) $(TESTED_DIR) $(RESOLVED_DIR) \
