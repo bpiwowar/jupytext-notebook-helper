@@ -40,6 +40,7 @@ from typing import List, Optional, Set, Union
 import jupytext
 import nbformat
 
+from jupytext_notebook_helper import config as course_config
 from jupytext_notebook_helper.inlining import (
     Imports,
     InternalResolver,
@@ -78,7 +79,8 @@ RE_PRINT_HEADER = re.compile(r"""^print_header\s*\(\s*["'](.+?)["']\s*\)\s*$""")
 
 # Packages never emitted in a notebook's install cell, and packages always
 # emitted (e.g. runtime-only deps such as sentencepiece that pip won't pull on
-# its own). Course-agnostic defaults are empty; pass per-project values via the
+# its own). Course-agnostic defaults are empty; per-project values come from
+# [tool.jupytext-notebook-helper] in the course pyproject.toml, and/or the
 # --pip-exclude / --pip-force-include CLI options.
 PIP_EXCLUDE = set()
 PIP_FORCE_INCLUDE = set()
@@ -189,9 +191,14 @@ args = parser.parse_args()
 logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
 exclude_tags = set(args.exclude or [])
 included_tags = set(args.include or [])
-PIP_EXCLUDE |= set(args.pip_exclude or [])
-PIP_FORCE_INCLUDE |= set(args.pip_force_include or [])
 UV_ROOT = args.uv_root or "."
+# Course-level lists live with the course's own metadata; the command line adds
+# to them (see jupytext_notebook_helper.config).
+_course_config = course_config.load(UV_ROOT)
+PIP_EXCLUDE |= set(_course_config.pip_exclude) | set(args.pip_exclude or [])
+PIP_FORCE_INCLUDE |= set(_course_config.pip_force_include) | set(
+    args.pip_force_include or []
+)
 
 # Resolves `from <internal> import ...` against src-root and inlines the needed
 # symbols (with their transitive dependencies) instead of importing them.

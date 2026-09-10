@@ -3,8 +3,15 @@
 # Include from a project Makefile (after setting any project-specific variables):
 #
 #     ZIP      := ../static/tp/tp-mycourse-uv.zip
-#     PIP_ARGS := --uv-root .. --pip-force-include sentencepiece
 #     include $(shell uv run python -m jupytext_notebook_helper.tpmk)
+#
+# Course-level package lists belong in the course's pyproject.toml rather than
+# here (see jupytext_notebook_helper/config.py):
+#
+#     [tool.jupytext-notebook-helper]
+#     pip-force-include = ["sentencepiece"]   # not imported, still needed
+#     pip-exclude = ["mycourse-internal"]     # never pip-installed by students
+#     student-base-deps = ["cached-hub>=0.3.0"]
 #
 # Generates four variants per source plus a uv bundle:
 #   $(SOURCES_DIR)/<name>.py -> $(DESTDIR_TP)/<name>.ipynb         student . local
@@ -48,7 +55,11 @@ STUDENT_README ?= $(SOURCES_DIR)/STUDENT_README.md
 STUDENT_ENV_DIR       ?= student-env
 STUDENT_ENV_NAME      ?= tp-student-env
 STUDENT_REQUIRES_PYTHON ?= >=3.10, <3.12
-STUDENT_BASE_DEPS     ?= jupyter jupyterlab ipywidgets
+# Added to what the notebooks import. jupyter / jupyterlab / ipywidgets are
+# always included; a course's own additions are better placed in its
+# pyproject.toml ([tool.jupytext-notebook-helper] student-base-deps), which can
+# carry version constraints without shell quoting.
+STUDENT_BASE_DEPS     ?=
 BUNDLE_PYPROJECT      ?= $(STUDENT_ENV_DIR)/pyproject.toml
 BUNDLE_LOCK           ?= $(STUDENT_ENV_DIR)/uv.lock
 # Ship the student notebooks inside the bundle (default). Set to `no` for an
@@ -154,24 +165,12 @@ $(SOLUTION_DIR)/%.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
 # Generated student env: union of the per-notebook package manifests (written by
 # the filter into $(DEPDIR)/<name>.pkgs while building the Colab variant) + a small
 # base to run notebooks. Depends on the Colab notebooks so the manifests exist.
-$(STUDENT_ENV_DIR)/pyproject.toml: $(STUDENT_COLAB)
-	@mkdir -p $(STUDENT_ENV_DIR)
-	@{ \
-	  echo '[project]'; \
-	  echo 'name = "$(STUDENT_ENV_NAME)"'; \
-	  echo 'version = "0.1.0"'; \
-	  echo 'requires-python = "$(STUDENT_REQUIRES_PYTHON)"'; \
-	  echo 'dependencies = ['; \
-	  { cat $(DEPDIR)/*.pkgs 2>/dev/null; printf '%s\n' $(STUDENT_BASE_DEPS); } \
-	    | sed '/^[[:space:]]*$$/d' | sort -u | sed 's/.*/    "&",/'; \
-	  echo ']'; \
-	  echo ''; \
-	  echo '[tool.uv]'; \
-	  echo 'package = false'; \
-	} > $@.tmp
-	@if cmp -s $@.tmp $@; then rm -f $@.tmp; \
-	else mv $@.tmp $@; \
-	  echo "Generated $@ from notebook imports ($(DEPDIR)/*.pkgs + base)"; fi
+$(STUDENT_ENV_DIR)/pyproject.toml: $(STUDENT_COLAB) $(ROOT)/pyproject.toml
+	@$(PYTHON) python -m jupytext_notebook_helper.studentenv \
+	  --depdir $(DEPDIR) --uv-root $(ROOT) --output $@ \
+	  --name '$(STUDENT_ENV_NAME)' \
+	  --requires-python '$(STUDENT_REQUIRES_PYTHON)' \
+	  $(foreach dep,$(STUDENT_BASE_DEPS),--base-dep '$(dep)')
 
 $(STUDENT_ENV_DIR)/uv.lock: $(STUDENT_ENV_DIR)/pyproject.toml
 	cd $(STUDENT_ENV_DIR) && uv lock

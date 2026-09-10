@@ -38,9 +38,12 @@ test_mode_value = os.environ.get("TESTING_MODE", "off").lower()
 test_mode = test_mode_value in ["on", "full"]
 # Figures can be suppressed on their own: a full-size run is often exactly when
 # the log matters most, and every inline figure is a base64 blob in it.
-skip_plots = test_mode_value == "full" or os.environ.get(
-    "SKIP_PLOTS", ""
-).lower() in ("1", "true", "yes", "on")
+skip_plots = test_mode_value == "full" or os.environ.get("SKIP_PLOTS", "").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 if test_mode:
     print(f"#># Testing mode: {test_mode_value}", file=sys.stderr)  # noqa: T201

@@ -272,8 +272,8 @@ Reusable make rules ship with the package. Include them from a project
 `Makefile` after setting any project-specific variables:
 
 ```makefile
-ZIP      := ../static/tp/tp-mycourse-uv.zip
-PIP_ARGS := --uv-root .. --pip-force-include sentencepiece
+ZIP  := ../static/tp/tp-mycourse-uv.zip
+ROOT := ..
 include $(shell uv run python -m jupytext_notebook_helper.tpmk)
 ```
 
@@ -281,6 +281,35 @@ This generates the four variants per source plus a `uv` bundle
 (`pyproject` + `uv.lock` + local notebooks + README), and an optional
 `make solution` target for a student-facing corrigé. See the header of
 `jupytext_notebook_helper/tp.mk` for the full list of configurable variables.
+
+### Course settings in `pyproject.toml`
+
+Which packages the Colab install cell and the student environment carry is
+course metadata rather than build layout, so it belongs with the course's other
+metadata:
+
+```toml
+[tool.jupytext-notebook-helper]
+# imported by no notebook, still needed at runtime
+pip-force-include = ["sentencepiece", "torchvision"]
+# never pip-installed by students (inlined, editable, or instructor-only)
+pip-exclude = ["mycourse-internal"]
+# added to the student environment whatever the notebooks import
+student-base-deps = ["cached-hub>=0.3.0"]
+student-env-name = "tp-mycourse"
+student-requires-python = ">=3.10, <3.12"
+```
+
+The table is read from the `pyproject.toml` under `ROOT` (the `--uv-root` the
+filter is given). Every key is optional and the matching make variable or
+command-line option still works, adding to the list rather than replacing it.
+
+The student environment is generated from the union of the per-notebook package
+manifests plus that base, deduplicated **by project name, constrained
+requirement first**: a notebook importing `cached_hub` contributes a bare
+`cached-hub`, and `student-base-deps` is where a floor can be put on it —
+without one, `uv lock` keeps whatever version it first resolved, which is how a
+bundle ends up shipping a year-old release.
 
 ### Shipping an environment-only bundle
 
