@@ -68,6 +68,40 @@ def test_teacher_keeps_solution_and_teacher_cell(tmp_path):
     assert "Not implemented yet" not in text
 
 
+ASSERT_NB = textwrap.dedent(
+    """
+    # %%
+    # [[student]] implement the answer
+    # [[assert]] Write the answer first
+    # >x = 0
+    answer = 42
+    # [[/student]]
+    """
+).lstrip()
+
+
+def test_assert_replaces_the_default_message(tmp_path):
+    src = tmp_path / "sample.py"
+    src.write_text(ASSERT_NB)
+    text = _text(_run([], src))
+    assert "assert False, 'Write the answer first'" in text  # custom message used
+    assert "Not implemented yet" not in text  # default message replaced
+    assert "answer = 42" not in text  # solution still removed
+    assert "x = 0" in text  # `# >` hint still uncommented
+    assert "[[assert]]" not in text  # marker never leaks
+
+
+def test_assert_marker_kept_for_teacher_dropped_for_solution(tmp_path):
+    src = tmp_path / "sample.py"
+    src.write_text(ASSERT_NB)
+    teacher = _text(_run(["--teacher"], src))
+    assert "[[assert]]" in teacher  # teacher keeps the markers
+    assert "answer = 42" in teacher
+    solution = _text(_run(["--solution"], src))
+    assert "[[assert]]" not in solution  # marker dropped from the corrigé
+    assert "Write the answer first" not in solution
+    assert "answer = 42" in solution
+
 # --------------------------------------------------------------------------- #
 # Automatic import gathering + internal inlining
 # --------------------------------------------------------------------------- #

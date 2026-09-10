@@ -583,7 +583,7 @@ def process(  # noqa: C901
         remove = False
         unindent = 0
         student_space = None
-        assert_ix: int | None = None
+        custom_assert: str | None = None
 
         tags = cell.get("metadata", {}).get("tags", [])
         cell_type = cell["cell_type"]
@@ -662,7 +662,7 @@ def process(  # noqa: C901
                             f"{student_space}# "
                             f"{m.group(2) if m.group(2) else '[[STUDENT]]...'}\n"
                         )
-                        assert_ix = len(lines)
+                        custom_assert = None
                 # [[/STUDENT]]
                 elif re_student_end.match(line) is not None:
                     assert hide, (
@@ -677,9 +677,11 @@ def process(  # noqa: C901
                         # Solution kept (appended below); just drop the marker.
                         pass
                     else:
+                        message = custom_assert or "Not implemented yet"
                         lines.append(
-                            f"""{student_space}assert False, 'Not implemented yet'\n"""
+                            f"{student_space}assert False, {message!r}\n"
                         )
+                        custom_assert = None
                     hide = False
                 elif m := re_assert.match(line):
                     assert hide, "Pas de [[student]] pour un [[assert]]"
@@ -690,12 +692,12 @@ def process(  # noqa: C901
                         # Solution kept below; drop the [[assert]] instruction marker.
                         pass
                     else:
-                        assert assert_ix is not None, (
-                            f"[[assert]] en double line {lineno}"
+                        assert custom_assert is None, (
+                            f"[[assert]] en double ligne {lineno}"
                         )
-                        lines[assert_ix] = None
-                        assert_ix = None
-                        lines.append(f"""{m.group(1)}{m.group(2)}\n"""[unindent:])
+                        # The message replaces 'Not implemented yet' in the
+                        # assertion emitted at [[/student]].
+                        custom_assert = m.group(2).strip()
 
                 elif re_remove_start.match(line):
                     assert not remove, "No [[/remove]] tag"
