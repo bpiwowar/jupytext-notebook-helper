@@ -244,9 +244,35 @@ class _Stmt:
 
 @dataclass
 class _Binding:
+    """Every top-level statement that binds ``name``, in source order.
+
+    A module-level name can be assigned several times (``data = load(...)``
+    then ``data = data.select(...)``): keeping only the last statement would
+    inline the update without the initial value.
+    """
+
     name: str
-    index: int
-    deps: Set[str]
+    stmts: List[_Stmt] = field(default_factory=list)
+
+    @property
+    def index(self) -> int:
+        """Index of the *last* statement binding the name."""
+        return self.stmts[-1].index
+
+    @property
+    def indices(self) -> List[int]:
+        return [stmt.index for stmt in self.stmts]
+
+    @property
+    def deps(self) -> Set[str]:
+        """Union of the dependencies of every binding statement.
+
+        Read live from the statements, which ``_build`` fills in a second pass.
+        """
+        deps: Set[str] = set()
+        for stmt in self.stmts:
+            deps |= stmt.deps
+        return deps
 
 
 class InternalModule:
@@ -280,7 +306,7 @@ class InternalModule:
         self._all_names = set(self.bindings)
 
         # Second pass: compute dependencies now that all names are known.
-        # Mutate ``stmt.deps`` in place so the _Binding sharing it stays in sync.
+        # Mutate ``stmt.deps`` in place: _Binding.deps reads the statements.
         globals_by_line = self._symtable_globals()
         for stmt, node in pending:
             if stmt.kind == "import":
@@ -356,7 +382,7 @@ class InternalModule:
         return None
 
     def _add_binding(self, name: str, stmt: _Stmt) -> None:
-        self.bindings[name] = _Binding(name, stmt.index, stmt.deps)
+        self.bindings.setdefault(name, _Binding(name)).stmts.append(stmt)
 
     def _segment(self, node: ast.AST) -> str:
         # `get_source_segment` starts at the `def`/`class` keyword; decorators
@@ -687,7 +713,7 @@ class InternalResolver:
         needed = module.closure([orig for orig, _ in pairs])
 
         # Emit statements in source order; recurse into internal imports.
-        indices = sorted({module.bindings[n].index for n in needed})
+        indices = sorted({i for n in needed for i in module.bindings[n].indices})
         pre_blocks: List[ExtractedSymbol] = []
         own_blocks: List[ExtractedSymbol] = []
         external: List[str] = []

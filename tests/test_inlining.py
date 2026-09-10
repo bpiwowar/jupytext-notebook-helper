@@ -438,3 +438,58 @@ def test_annotation_only_dependencies_are_tracked(tmp_path):
     resolved = resolver.resolve("lib", [("first", "first")])
     sources = "\n".join(block.source for block in resolved.blocks)
     assert 'T = TypeVar("T")' in sources
+
+
+# --------------------------------------------------------------------------- #
+# Rebound module-level names
+# --------------------------------------------------------------------------- #
+
+REBIND_SRC = textwrap.dedent(
+    """
+    from helpers import make
+
+    BASE = 3
+    data = make(BASE)
+    data = data.tweak()
+
+    def public():
+        return data
+    """
+)
+
+
+def test_closure_keeps_every_binding_of_a_rebound_name(tmp_path):
+    """A name assigned several times at module level needs *all* its
+    assignments: keeping only the last one loses the initial value."""
+    _root, path = _module(tmp_path, src=REBIND_SRC)
+    mod = InternalModule("mylib.helpers", path)
+
+    closure = mod.closure(["public"])
+    # `data = make(BASE)` must be reachable, with its own dependencies.
+    assert {"public", "data", "make", "BASE"}.issubset(closure)
+
+
+def test_resolver_emits_every_assignment_of_a_rebound_name(tmp_path):
+    resolver = _resolver_with(
+        tmp_path,
+        {
+            "lib": """
+                BASE = 3
+
+                def make(n):
+                    return [n]
+
+                data = make(BASE)
+                data = data + [1]
+
+                def public():
+                    return data
+            """,
+        },
+    )
+    resolved = resolver.resolve("lib", [("public", "public")])
+    sources = [block.source for block in resolved.blocks]
+    assert "data = make(BASE)" in sources
+    assert "data = data + [1]" in sources
+    # ... and in source order, so the notebook re-executes them correctly.
+    assert sources.index("data = make(BASE)") < sources.index("data = data + [1]")
