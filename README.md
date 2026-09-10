@@ -28,14 +28,18 @@ fidelity) so a broken example fails on your machine, not the student's.
 ## The idea in one picture
 
 ```
-                         ┌─ teacher.ipynb        (solutions kept)
-   tp1.py   ──filter──▶  ├─ tp1.ipynb            (solutions blanked)
- (py:percent)            ├─ tp1.colab.ipynb      (+ auto %pip install cell)
-                         └─ solution.ipynb        (optional corrigé)
+                         ┌─ teacher/tp1.ipynb        (solutions kept)
+   tp1.py   ──filter──▶  ├─ student/tp1.ipynb        (solutions blanked)
+ (py:percent)            ├─ student/colab/tp1.ipynb  (+ auto %pip install cell)
+                         └─ solution/tp1.ipynb       (optional corrigé)
         │
         └─ + uv bundle (pyproject + uv.lock + notebooks) for a reproducible
              local install
 ```
+
+Each output directory keeps its Colab variants in a `colab/` sub-directory
+(`teacher/colab/tp1.ipynb`, `solution/colab/tp1.ipynb`, …) — same file name as
+the local notebook, so a link only changes by one path segment.
 
 You author in `tp1.py`; students never see the machinery.
 
@@ -94,10 +98,11 @@ A tiny import surface, meant for a **teacher-only** cell — students never see 
 test-mode machinery and the package is not required on Colab:
 
 ```python
-from jupytext_notebook_helper import *   # test_mode, skip_plots, print_header, is_notebook
+from jupytext_notebook_helper import *   # test_mode, skip_plots, print_header,
+                                         # is_notebook, set_test_mode, …
 ```
 
-- `test_mode` / `skip_plots` — driven by the `TESTING_MODE` env var
+- `test_mode` / `skip_plots` — seeded by the `TESTING_MODE` env var
   (`off` | `on` | `full`): reduce datasets/training when testing, and drop every
   figure in `full`.
 - `SKIP_PLOTS=1` (`1`/`true`/`yes`/`on`) — drop the figures **without** touching
@@ -109,6 +114,45 @@ from jupytext_notebook_helper import *   # test_mode, skip_plots, print_header, 
   to render figures inline in the terminal via `imgcat` — unless `skip_plots`,
   which is now honoured before the inline rendering (until 0.5.0 `full` still
   wrote every figure to the terminal whenever `imgcat` was installed).
+
+### Switching the mode from the notebook
+
+`test_mode` is not a value captured at import but a **live proxy**: `if
+test_mode:` asks for the current mode each time it runs. It still behaves like
+the `bool` it replaces (`if`, `not`, `x if test_mode else y`,
+`test_mode == True`, `int(test_mode)`, `f"{test_mode}"`); the only difference is
+`test_mode is True`, which no course used.
+
+- `set_test_mode("on" | "off" | "full")` — switch by hand, anywhere (also
+  accepts `True` / `False`). Cells run *afterwards* see the new value; cells
+  already executed of course keep the sizes they computed, so switch near the
+  top, before the compute cells.
+- `select_test_mode()` — display an `ipywidgets` toggle (`off` / `on`) in a
+  notebook. It is called automatically when the package is imported from a
+  notebook and `TESTING_MODE` is **not** set, so existing teacher notebooks get
+  the chooser without any change; `TESTING_MODE_WIDGET=0` disables that
+  automatic call, and an explicit call always displays it (useful if the cell
+  was re-run, which clears its output).
+- `current_test_mode()` — `"off"`, `"on"` or `"full"`.
+
+What is *not* switchable at run time: **figure suppression**. `full` drops
+figures by pinning matplotlib to `Agg` at import, and a notebook renders figures
+through the inline backend at the end of each cell, not through the `plt.show()`
+this package patches (that patch is script-only). So `full` stays a start-up
+decision (`TESTING_MODE=full`, `SKIP_PLOTS=1`) — exactly how `make check` /
+`make check-ipynb` use it. The in-notebook chooser therefore only offers
+`off` / `on`, and `set_test_mode("full")` inside a notebook says that the
+figures stay as they are instead of pretending otherwise.
+
+`TESTING_MODE`, when set, gives the initial mode **and** suppresses the chooser:
+a script run, `make check` and `make check-ipynb` behave exactly as before — no
+widget, no prompt, no extra output, and nothing that ever waits for input
+outside a notebook. It is not a lock: an explicit `set_test_mode(...)` from the
+teacher still wins (a lock would defeat the point under `make lab-test`).
+
+`ipywidgets` is an **optional** dependency
+(`pip install "jupytext-notebook-helper[widgets]"`). Without it, the chooser
+degrades to a one-line hint pointing at `set_test_mode(...)`.
 
 The package was extracted from `master_mind.teaching.utils` so it can be reused
 across courses without pulling in the whole master-mind framework.
@@ -260,9 +304,12 @@ every kernel runs on reduced datasets/training **with plots still shown** (unlik
 the `from jupytext_notebook_helper import *` cell, so this is the only build
 where `test_mode` exists.
 
-The mode is read at import, hence fixed per kernel: restart the kernel to pick up
-a change, restart the server to change the value. Override `LAB_DIR`, `LAB` or
-`LAB_TEST_MODE` to point elsewhere (e.g. `make lab LAB_DIR=solution`).
+Since 0.8 `make lab` is usually enough: with no `TESTING_MODE` in the
+environment, the helper cell shows a toggle and the mode can be switched from
+the notebook itself (see *Switching the mode from the notebook*), so `lab-test`
+is only useful to start **every** kernel of a session in `on` — and it then
+suppresses the toggle. Override `LAB_DIR`, `LAB` or `LAB_TEST_MODE` to point
+elsewhere (e.g. `make lab LAB_DIR=solution`).
 Edits made in Lab are **not** written back to `sources/` — the notebooks are
 build outputs.
 
@@ -279,8 +326,35 @@ include $(shell uv run python -m jupytext_notebook_helper.tpmk)
 
 This generates the four variants per source plus a `uv` bundle
 (`pyproject` + `uv.lock` + local notebooks + README), and an optional
-`make solution` target for a student-facing corrigé. See the header of
-`jupytext_notebook_helper/tp.mk` for the full list of configurable variables.
+`make solution` target for a student-facing corrigé:
+
+```
+sources/tp1.py  ->  $(DESTDIR_TP)/tp1.ipynb          student, local
+                ->  $(DESTDIR_TP)/colab/tp1.ipynb    student, Colab
+                ->  $(TEACHER_DIR)/tp1.ipynb         teacher, local
+                ->  $(TEACHER_DIR)/colab/tp1.ipynb   teacher, Colab
+                ->  $(SOLUTION_DIR)/tp1.ipynb        corrigé, local  (make solution)
+                ->  $(SOLUTION_DIR)/colab/tp1.ipynb  corrigé, Colab  (make solution)
+                 +  $(ZIP)                           uv bundle, local notebooks only
+```
+
+The sub-directory name is `COLAB_SUBDIR` (default `colab`); it must not be
+empty. See the header of `jupytext_notebook_helper/tp.mk` for the full list of
+configurable variables.
+
+> **Upgrading from < 0.8.** The Colab notebooks used to be written next to the
+> local ones as `<name>.colab.ipynb`. A course usually has nothing to change in
+> its `Makefile`, but check three things:
+>
+> - `make clean` once after upgrading — it deletes the stale
+>   `<name>.colab.ipynb` files, which would otherwise stay on disk (and keep
+>   being deployed) forever;
+> - a `.gitignore` listing `*.colab.ipynb` explicitly must gain the
+>   `colab/` directories (a `.gitignore` that ignores `student/`, `teacher/`
+>   and `solution/` wholesale needs nothing);
+> - a deployment command that filters on file names — a typical
+>   `rsync --include "*.ipynb" --exclude "*"` never descends into a directory
+>   it has not been told to include, so it needs `--include "colab/"` as well.
 
 ### Course settings in `pyproject.toml`
 
