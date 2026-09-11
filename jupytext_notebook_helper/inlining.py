@@ -342,18 +342,22 @@ class InternalModule:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 name = alias.asname or alias.name
+                # `import a.b` binds `a`, not `a.b`: the body reaches `b`
+                # through the dotted path, so `a` is the only bare name the
+                # dependency walk can ever see.
+                bound = alias.asname or alias.name.split(".")[0]
                 st = _Stmt(
                     len(self.stmts),
                     "import",
                     f"import {Imports.alias(alias.name, name)}",
                     origin,
-                    [name],
+                    [bound],
                     import_module=alias.name,
                     import_level=0,
                     import_orig=None,
                     import_alias=name,
                 )
-                self._add_binding(name, st)
+                self._add_binding(bound, st)
                 self.stmts.append(st)
             return None
 

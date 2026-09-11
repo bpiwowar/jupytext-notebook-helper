@@ -493,3 +493,93 @@ def test_resolver_emits_every_assignment_of_a_rebound_name(tmp_path):
     assert "data = data + [1]" in sources
     # ... and in source order, so the notebook re-executes them correctly.
     assert sources.index("data = make(BASE)") < sources.index("data = data + [1]")
+
+
+# --------------------------------------------------------------------------- #
+# Dotted imports (`import a.b`)
+# --------------------------------------------------------------------------- #
+
+
+def test_dotted_import_binds_its_root(tmp_path):
+    """``import a.b`` binds ``a``, the only bare name the body can use."""
+    _root, path = _module(
+        tmp_path,
+        src="import urllib.request\n",
+    )
+    mod = InternalModule("mylib.helpers", path)
+    assert "urllib" in mod.bindings
+    assert "urllib.request" not in mod.bindings
+    assert "request" not in mod.bindings
+
+
+def test_resolver_keeps_dotted_import(tmp_path):
+    """Usage through the dotted path must keep the import alive."""
+    resolver = _resolver_with(
+        tmp_path,
+        {
+            "lib": """
+                import os
+                import urllib.request
+
+                def fetch(url, dest):
+                    urllib.request.urlretrieve(url, dest)
+                    return os.path.getsize(dest)
+            """,
+        },
+    )
+    result = resolver.resolve("lib", [("fetch", "fetch")])
+    assert "import urllib.request" in result.external
+    assert "import os" in result.external
+
+
+def test_resolver_dotted_import_with_alias(tmp_path):
+    """``import a.b as c`` binds ``c``, and is rendered back with its alias."""
+    resolver = _resolver_with(
+        tmp_path,
+        {
+            "lib": """
+                import urllib.request as req
+
+                def fetch(url, dest):
+                    req.urlretrieve(url, dest)
+            """,
+        },
+    )
+    result = resolver.resolve("lib", [("fetch", "fetch")])
+    assert "import urllib.request as req" in result.external
+
+
+def test_resolver_keeps_every_dotted_import_of_one_root(tmp_path):
+    """Two sub-modules of the same package both bind the root name."""
+    resolver = _resolver_with(
+        tmp_path,
+        {
+            "lib": """
+                import urllib.parse
+                import urllib.request
+
+                def fetch(url):
+                    return urllib.request.urlopen(urllib.parse.quote(url))
+            """,
+        },
+    )
+    result = resolver.resolve("lib", [("fetch", "fetch")])
+    assert "import urllib.parse" in result.external
+    assert "import urllib.request" in result.external
+
+
+def test_resolver_drops_unused_dotted_import(tmp_path):
+    """The root name is still a name: an unused dotted import stays out."""
+    resolver = _resolver_with(
+        tmp_path,
+        {
+            "lib": """
+                import urllib.request
+
+                def plain():
+                    return 1
+            """,
+        },
+    )
+    result = resolver.resolve("lib", [("plain", "plain")])
+    assert result.external == []
