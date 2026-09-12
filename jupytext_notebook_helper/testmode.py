@@ -21,7 +21,7 @@ patches (that patch is script-only). Changing the backend mid-kernel does not
 reliably restore, or suppress, inline rendering. Figure suppression is therefore
 **not** hot-switchable inside a notebook: it is a start-up decision
 (``TESTING_MODE=full``, ``SKIP_PLOTS=1``), which is exactly how ``make check`` /
-``make check-ipynb`` use it. The notebook chooser only offers ``off`` / ``on``
+``make check-teacher`` use it. The notebook chooser only offers ``off`` / ``on``
 for that reason; ``set_test_mode("full")`` in a notebook warns that the figures
 stay as they are.
 
@@ -30,7 +30,7 @@ Priority of the environment variable
 
 ``TESTING_MODE``, when set, gives the **initial** mode and suppresses the
 automatic chooser: a kernel started with ``TESTING_MODE=full`` (``make
-check-ipynb``) or a plain script run behaves exactly as before, no widget, no
+check-teacher``) or a plain script run behaves exactly as before, no widget, no
 prompt, no extra output. It is not a lock: an explicit ``set_test_mode(...)`` /
 ``select_test_mode()`` from the teacher still wins, because a locked value would
 defeat the whole point under ``make lab-test``. Nothing outside a notebook ever

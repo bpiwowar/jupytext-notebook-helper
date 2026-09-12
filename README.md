@@ -184,12 +184,12 @@ figures by pinning matplotlib to `Agg` at import, and a notebook renders figures
 through the inline backend at the end of each cell, not through the `plt.show()`
 this package patches (that patch is script-only). So `full` stays a start-up
 decision (`TESTING_MODE=full`, `SKIP_PLOTS=1`) — exactly how `make check` /
-`make check-ipynb` use it. The in-notebook chooser therefore only offers
+`make check-teacher` use it. The in-notebook chooser therefore only offers
 `off` / `on`, and `set_test_mode("full")` inside a notebook says that the
 figures stay as they are instead of pretending otherwise.
 
 `TESTING_MODE`, when set, gives the initial mode **and** suppresses the chooser:
-a script run, `make check` and `make check-ipynb` behave exactly as before — no
+a script run, `make check` and `make check-teacher` behave exactly as before — no
 widget, no prompt, no extra output, and nothing that ever waits for input
 outside a notebook. It is not a lock: an explicit `set_test_mode(...)` from the
 teacher still wins (a lock would defeat the point under `make lab-test`).
@@ -367,6 +367,84 @@ elsewhere (e.g. `make lab LAB_DIR=solution`).
 Edits made in Lab are **not** written back to `sources/` — the notebooks are
 build outputs.
 
+## Running the teacher notebooks: `make run-teacher`
+
+`check` runs the *sources*, as scripts, to say pass or fail. `run-teacher` runs
+the built **teacher notebooks** through Jupyter and keeps the executed
+notebooks, with their figures, under `$(RUN_DIR)` (default `run/`) — one `.log`
+and one `.time` beside each. It is meant for a night on the best GPU around,
+after which the results are read rather than only counted.
+
+```sh
+make run-teacher                        # every notebook, profile auto-detected
+make run-teacher:03-efficiency          # just one
+make run-teacher NOTEBOOK_PROFILE=small # a smaller rung
+make run-teacher RUN_TIMEOUT=1200       # give up on a notebook after 20 min
+make show-run                           # state, duration and path, per notebook
+```
+
+**What is not run again.** Each notebook has a stamp under `$(RUN_DIR)/.done/`,
+named after the profile in force (`auto` when `NOTEBOOK_PROFILE` is unset), and
+depending on `$(TEACHER_DIR)/<name>.ipynb` — which in turn depends on the
+source. A notebook is therefore re-run when its source changed, when the profile
+changed, or when the last run failed (a failure leaves no stamp), and skipped
+otherwise. `make run-again` forgets every stamp without deleting the notebooks.
+
+`make check-teacher` is the same runner used as a smoke test: profile
+`$(RUN_CHECK_PROFILE)` (default `fast-test`) with `RUN_OUTPUT=off`, so it
+answers "does everything still execute" rather than "is the figure right".
+`check-teacher:<name>` for a single notebook.
+
+Notebooks are executed **in place**, as a copy under `$(RUN_DIR)`, so the kernel
+starts in the project directory where `src/` and the output directories are.
+A cell that raises does not stop the run (`--allow-errors`): the error is found
+afterwards in the saved notebook and in the missing stamp, so one broken cell
+never throws away a night's work.
+
+## Declared Hub resources: `make check-resources`
+
+A course that declares the models and datasets its notebooks load — a
+[`cached-hub`](https://github.com/bpiwowar/cached-hub) declaration module — gets
+a `check-resources` target, and `check` depends on it, by pointing
+`RESOURCES_PY` at that module:
+
+```makefile
+RESOURCES_PY := src/mycourse/resources.py
+```
+
+It runs two steps, because they catch different things. `cached-hub check` reads
+the `load_hf_*` calls back out of `$(SOURCES_DIR)` and fails when the
+declaration no longer describes them (a model added to a notebook, one that
+stopped being loaded); it works on the AST, without importing, so a resource
+built at run time is never executed by it. The second step imports the module
+for real and builds every resource object — that is what catches an import
+error, a typo in a factory argument, or a section that no longer loads. The
+module path is derived from `RESOURCES_PY` and `SRC_ROOT`; override
+`RESOURCES_MODULE` if the mapping is not the obvious one.
+
+## Deployment: `make rsync`
+
+Setting `SSH_HOST` defines `rsync`, which builds `student` and copies
+`$(DESTDIR_TP)/` to `$(SSH_HOST):$(SSH_PATH)`:
+
+```makefile
+SSH_HOST := user@example.org
+SSH_PATH := public_html/mycourse/practical
+RSYNC_DATA := ../data     # optional: symlinked into $(DESTDIR_TP) as `data`
+```
+
+`RSYNC_INCLUDE` (default `colab/ *.ipynb *.zip`) is what reaches the server.
+The `colab/` entry is not decoration: rsync never descends into a directory it
+was not told to include, so without it the Colab notebooks silently stop being
+deployed. Bulk data (caches, corpora) travels separately, through `rsync-data`,
+defined when `SSH_STUDENT_DATA` is set:
+
+```makefile
+STUDENT_DATA_DIR      := student-data
+SSH_STUDENT_DATA      := ssh.example.org
+SSH_STUDENT_DATA_PATH := student-data/cache
+```
+
 ## Wiring it into a course
 
 Reusable make rules ship with the package. Include them from a project
@@ -395,6 +473,18 @@ sources/tp1.py  ->  $(DESTDIR_TP)/tp1.ipynb          student, local
 The sub-directory name is `COLAB_SUBDIR` (default `colab`); it must not be
 empty. See the header of `jupytext_notebook_helper/tp.mk` for the full list of
 configurable variables.
+
+`make help` (the default goal) lists every target, one section per kind of work:
+build, check the sources, run the teacher notebooks, edit, deploy. A course adds
+its own section — printed last — by defining and **exporting** `HELP_PROJECT`:
+
+```makefile
+define HELP_PROJECT
+Corpus (this repository)
+  lotte-corpus     build the LoTTE tarball
+endef
+export HELP_PROJECT
+```
 
 > **Upgrading from < 0.8.** The Colab notebooks used to be written next to the
 > local ones as `<name>.colab.ipynb`. A course usually has nothing to change in

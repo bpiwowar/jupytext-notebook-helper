@@ -116,39 +116,15 @@ DEPFILES      := $(NAMES:%=$(DEPDIR)/%.d)
 TESTED        := $(NAMES:%=$(TESTED_DIR)/%.tested)
 RESOLVED      := $(NAMES:%=$(RESOLVED_DIR)/%.resolved)
 
-.PHONY: help all student notebooks teacher solution bundle check check-raw \
+.PHONY: all student notebooks teacher solution bundle check check-raw \
 	check-bundle show-tests show-raw lab lab-test clean
-help:
-	@echo "Practicals targets:"
-	@echo "  student          student notebooks (local + Colab) + uv zip"
-	@echo "  teacher          teacher notebooks (local + Colab, with solutions)"
-	@echo "  solution         student-facing solution / corrigé (local + Colab, with"
-	@echo "                   solutions, no instructor cells/markers/tag comments)"
-	@echo "  bundle           the uv-ready student zip only$(if $(BUNDLE_WITH_NOTEBOOKS),, (env only, no notebooks))"
-	@echo "  check-bundle     verify the zip resolves with uv (no install)"
-	@echo "  all              student + teacher"
-	@echo "  check            run every source with internal imports RESOLVED (the"
-	@echo "                   exact inlined code students get) at profile"
-	@echo "                   $(CHECK_PROFILE), output $(CHECK_OUTPUT); pass/fail under"
-	@echo "                   $(RESOLVED_DIR)/. The gate that matches the built notebooks."
-	@echo "                   CHECK_PROFILE/CHECK_OUTPUT/CHECK_TIMEOUT to adjust."
-	@echo "  check:<name>     run a single source (e.g. make check:tp1-embeddings)"
-	@echo "  check-raw        run every source as a plain script (imports full src/):"
-	@echo "                   faster/looser, for early debugging; misses inlining bugs"
-	@echo "  check-raw:<name> raw run of a single source"
-	@echo "  show-tests       show last 'check' pass/fail status per source"
-	@echo "  show-raw         show last 'check-raw' pass/fail status per source"
-	@echo "  lab              JupyterLab on the teacher notebooks (built first)"
-	@echo "  lab-test         same, at profile $(LAB_PROFILE): reduced datasets and"
-	@echo "                   training, figures still shown"
-	@echo "  clean            remove generated notebooks, teacher/, zip, $(DEPDIR), $(TESTED_DIR)"
-	@echo "                   (also the pre-0.8 <name>.colab.ipynb outputs)"
-	@echo ""
-	@echo "Layout: <name>.ipynb next to the sources' output dir, Colab variants"
-	@echo "        under $(COLAB_SUBDIR)/ — $(DESTDIR_TP)/$(COLAB_SUBDIR)/<name>.ipynb,"
-	@echo "        $(TEACHER_DIR)/$(COLAB_SUBDIR)/<name>.ipynb, $(SOLUTION_DIR)/$(COLAB_SUBDIR)/<name>.ipynb"
-	@echo ""
-	@echo "Sources: $(NAMES)"
+
+# `help` used to be the first target here, and so the default goal; it now sits
+# at the bottom, one section per kind of work, so say it explicitly — unless the
+# project declared a target of its own before the include.
+ifeq ($(.DEFAULT_GOAL),)
+.DEFAULT_GOAL := help
+endif
 
 all: student teacher
 student: $(STUDENT_LOCAL) $(STUDENT_COLAB) $(ZIP)
@@ -351,6 +327,289 @@ clean:
 	@rm -rf $(TEACHER_DIR) $(SOLUTION_DIR) $(DEPDIR) $(TESTED_DIR) $(RESOLVED_DIR) \
 		$(BUNDLE_DIR) $(STUDENT_ENV_DIR) $(STUDENT_LOCAL) $(STUDENT_COLAB) \
 		$(STUDENT_COLAB_DIR) $(LEGACY_COLAB) $(ZIP)
+
+# ---- run-teacher: execute the teacher notebooks, and KEEP the result -------
+#
+# `check` runs the *sources* as scripts, to say pass or fail. This runs the
+# built teacher notebooks through Jupyter, at whatever profile the environment
+# asks for, and keeps the executed notebooks with their figures — made for a
+# night on the best GPU around.
+#
+#   make run-teacher                        every notebook, profile auto-detected
+#   make run-teacher:03-efficiency          just one
+#   make run-teacher NOTEBOOK_PROFILE=small a smaller rung
+#   make run-teacher RUN_TIMEOUT=1200       give up on a notebook after 20 min
+#   make show-run                           the summary, once it is over
+#   make check-teacher                      the same runner as a smoke test
+#
+# What is NOT run again. Each notebook has a stamp under $(RUN_DIR)/.done/,
+# keyed by profile; the stamp depends on $(TEACHER_DIR)/<name>.ipynb, which
+# itself depends on the source. So a notebook is re-run when its source
+# changed, when the profile changed, or when the last run failed (a failure
+# leaves no stamp) — and skipped otherwise. `make run-again` forgets every
+# stamp. The executed notebook is kept either way: a failure is worth reading.
+RUN_DIR     ?= run
+#: Where figures go. These notebooks are meant to be read, not just to pass.
+RUN_OUTPUT  ?= notebook
+#: Wall-clock cap per notebook, in seconds. Empty means none.
+RUN_TIMEOUT ?=
+#: The rung a smoke test (`check-teacher`) drops to.
+RUN_CHECK_PROFILE ?= fast-test
+
+#: The rung actually in force, for the stamp path and the log line. Empty
+#: NOTEBOOK_PROFILE is the interesting case: the ladder decides.
+RUN_PROFILE_LABEL := $(if $(NOTEBOOK_PROFILE),$(NOTEBOOK_PROFILE),auto)
+RUN_STAMP_DIR     := $(RUN_DIR)/.done
+RUN_STAMPS        := $(NAMES:%=$(RUN_STAMP_DIR)/%.$(RUN_PROFILE_LABEL))
+
+# NOTEBOOK_PROFILE is exported rather than set on the recipe line, so that
+# `NOTEBOOK_PROFILE=small make run-teacher` and `make run-teacher
+# NOTEBOOK_PROFILE=small` behave the same. Unset, it stays unset.
+ifneq ($(NOTEBOOK_PROFILE),)
+export NOTEBOOK_PROFILE
+endif
+RUN_ENV   = NOTEBOOK_OUTPUT=$(RUN_OUTPUT) $(NOTEBOOK_ENV)
+RUN_LIMIT = $(if $(RUN_TIMEOUT),perl -e 'alarm shift @ARGV; exec @ARGV or die' $(RUN_TIMEOUT),)
+
+.PHONY: run-teacher show-run run-again check-teacher
+run-teacher\:%:
+	@$(MAKE) $(RUN_STAMP_DIR)/$*.$(RUN_PROFILE_LABEL)
+
+# A copy executed in place, rather than nbconvert into another directory: the
+# kernel then starts in $(CURDIR), where $(SRC_ROOT)/ and the outputs are.
+#
+# --allow-errors so one broken cell does not throw away a night's work; the
+# error is found afterwards in the saved notebook, and in the missing stamp.
+# --timeout=-1 for the same reason: a legitimately slow cell is not a hung one,
+# and RUN_TIMEOUT is what bounds a notebook as a whole.
+$(RUN_STAMP_DIR)/%.$(RUN_PROFILE_LABEL): $(TEACHER_DIR)/%.ipynb
+	@mkdir -p $(RUN_STAMP_DIR)
+	@rm -f $(RUN_DIR)/$*.time
+	@cp $< $(RUN_DIR)/$*.ipynb
+	@echo "== $* (profile $(RUN_PROFILE_LABEL)) =="
+	@start=$$(date +%s); \
+	if $(RUN_ENV) $(RUN_LIMIT) $(PYTHON) jupyter execute --inplace \
+			--allow-errors --timeout=-1 $(RUN_DIR)/$*.ipynb \
+			> $(RUN_DIR)/$*.log 2>&1 \
+		&& ! grep -q '"output_type": "error"' $(RUN_DIR)/$*.ipynb; then \
+		ok=1; \
+	else \
+		ok=0; \
+	fi; \
+	elapsed=$$(( $$(date +%s) - start )); \
+	echo "$$elapsed" > $(RUN_DIR)/$*.time; \
+	if [ $$ok = 1 ]; then \
+		touch $@; \
+		printf "\033[32m  OK   %-28s %d min %02d s\033[0m\n" \
+			"$*" "$$(( elapsed / 60 ))" "$$(( elapsed % 60 ))"; \
+	else \
+		printf "\033[31m  FAIL %-28s %d min %02d s — $(RUN_DIR)/$*.log\033[0m\n" \
+			"$*" "$$(( elapsed / 60 ))" "$$(( elapsed % 60 ))"; \
+	fi
+
+run-teacher: | $(RUN_DIR)
+	@$(MAKE) $(RUN_STAMPS)
+	@echo "Done — 'make show-run' for the summary, $(RUN_DIR)/ for the notebooks"
+
+$(RUN_DIR): ; @mkdir -p $@
+
+# Forget the stamps, keep the notebooks: the next run starts over.
+run-again:
+	@rm -rf $(RUN_STAMP_DIR)
+	@echo "Stamps cleared — the next 'make run-teacher' re-runs everything"
+
+# The smoke test is the same runner at the smallest rung, with no figures.
+check-teacher:
+	@$(MAKE) run-teacher NOTEBOOK_PROFILE=$(RUN_CHECK_PROFILE) RUN_OUTPUT=off
+check-teacher\:%:
+	@$(MAKE) run-teacher:$* NOTEBOOK_PROFILE=$(RUN_CHECK_PROFILE) RUN_OUTPUT=off
+
+show-run:
+	@printf "  %-28s %-6s %-12s %s\n" "notebook" "state" "duration" "output"
+	@printf "  %-28s %-6s %-12s %s\n" "--------" "-----" "--------" "------"
+	@total=0; \
+	for n in $(NAMES); do \
+		if [ -f "$(RUN_STAMP_DIR)/$$n.$(RUN_PROFILE_LABEL)" ]; then s="[OK]"; \
+		elif [ -f "$(RUN_DIR)/$$n.ipynb" ]; then s="[FAIL]"; \
+		else s="[ -- ]"; fi; \
+		if [ -f "$(RUN_DIR)/$$n.time" ]; then \
+			t=$$(cat "$(RUN_DIR)/$$n.time"); \
+			total=$$(( total + t )); \
+			d=$$(printf "%d min %02d s" "$$(( t / 60 ))" "$$(( t % 60 ))"); \
+		else d="-"; fi; \
+		printf "  %-28s %-6s %-12s %s\n" "$$n" "$$s" "$$d" "$(RUN_DIR)/$$n.ipynb"; \
+	done; \
+	printf "  %-28s %-6s %d min %02d s  (profile $(RUN_PROFILE_LABEL))\n" \
+		"total" "" "$$(( total / 60 ))" "$$(( total % 60 ))"
+
+# ---- check-resources: the declared Hub resources vs. what the sources load --
+# Only defined when the course points RESOURCES_PY at a cached-hub declaration
+# module (e.g. src/mycourse/resources.py); `check` then depends on it.
+#
+# `cached-hub check` reads the load_hf_* calls back out of $(SOURCES_DIR) and
+# fails when the declaration no longer describes them: a model added to a
+# notebook, one that stopped being loaded. It works on the AST, without
+# importing, so a resource built at run time is never executed by it — hence
+# the second step, which imports the module for real and builds every resource
+# object: that is what catches an import error, a typo in a factory argument,
+# or a section that no longer loads.
+#
+# For a new notebook, a skeleton to fill in:
+#     cached-hub scan $(SOURCES_DIR) --emit <section>
+RESOURCES_PY ?=
+#: Dotted module path of $(RESOURCES_PY), derived from $(SRC_ROOT).
+RESOURCES_MODULE ?= $(subst /,.,$(patsubst $(SRC_ROOT)/%,%,$(basename $(RESOURCES_PY))))
+CACHED_HUB ?= $(PYTHON) cached-hub
+
+ifneq ($(strip $(RESOURCES_PY)),)
+.PHONY: check-resources
+check-resources:
+	@$(CACHED_HUB) check $(SOURCES_DIR) --search-path $(SRC_ROOT) \
+		--declaration $(RESOURCES_PY)
+	@$(PYTHON) python -m $(RESOURCES_MODULE) list >/dev/null
+	@echo "$(RESOURCES_MODULE) imports and lists its resources"
+check: check-resources
+endif
+
+# ---- deployment -----------------------------------------------------------
+# Only defined when the course sets SSH_HOST. $(DESTDIR_TP) is copied to
+# $(SSH_HOST):$(SSH_PATH); RSYNC_DATA, if set, is symlinked into it as `data`
+# first (a directory shared with the rest of the course site).
+SSH_HOST ?=
+SSH_PATH ?=
+#: What of $(DESTDIR_TP) reaches the server. rsync never descends into a
+#: directory it was not told to include, so "colab/" must come before
+#: "*.ipynb" — without it the Colab notebooks silently stop being deployed.
+RSYNC_INCLUDE ?= colab/ *.ipynb *.zip
+#: Relative to $(DESTDIR_TP): symlinked there as `data` and deployed with the
+#: notebooks. Empty means the course ships no data directory.
+RSYNC_DATA ?=
+#: Bulk data (caches, corpora) deployed separately, by `rsync-data`.
+STUDENT_DATA_DIR ?= student-data
+SSH_STUDENT_DATA ?=
+SSH_STUDENT_DATA_PATH ?=
+
+RSYNC_DATA_LINK := $(if $(RSYNC_DATA),$(DESTDIR_TP)/data)
+RSYNC_ARGS := $(foreach i,$(RSYNC_INCLUDE) $(if $(RSYNC_DATA),data/ data/*),--include "$(i)")
+
+ifneq ($(strip $(SSH_HOST)),)
+.PHONY: rsync
+$(RSYNC_DATA_LINK):
+	ln -sf $(RSYNC_DATA) $@
+
+rsync: student $(RSYNC_DATA_LINK)
+	@echo "=== Synchronizing student notebooks on $(SSH_HOST) ==="
+	@ssh $(SSH_HOST) mkdir -p $(SSH_PATH)
+	rsync --copy-unsafe-links -azv $(RSYNC_ARGS) --exclude "*" --delete-excluded \
+		$(DESTDIR_TP)/ $(SSH_HOST):$(SSH_PATH)
+endif
+
+ifneq ($(strip $(SSH_STUDENT_DATA)),)
+.PHONY: rsync-data
+rsync-data:
+	rsync -azv --progress --partial --delete-excluded \
+		$(STUDENT_DATA_DIR)/ $(SSH_STUDENT_DATA):$(SSH_STUDENT_DATA_PATH)
+endif
+
+# ---- help -----------------------------------------------------------------
+# One section per kind of work. A course adds its own section by defining and
+# EXPORTING HELP_PROJECT (printed last):
+#
+#     define HELP_PROJECT
+#     Corpus
+#       lotte-corpus     build the LoTTE tarball
+#     endef
+#     export HELP_PROJECT
+HELP_PROJECT ?=
+
+# The optional entries. They live in their own variables because a `$(if ...)`
+# argument is split on the FIRST comma: written inline, a line of prose would be
+# cut at its first comma, whereas a `$(VAR)` reference is one token and is
+# expanded only afterwards.
+define HELP_RESOURCES
+  check-resources  check $(RESOURCES_PY) against the load_hf_* calls in
+                   $(SOURCES_DIR)/ (cached-hub check), then import it for real
+                   and build every resource. Run by 'check'. A skeleton for a
+                   new notebook: cached-hub scan $(SOURCES_DIR) --emit <section>
+endef
+
+define HELP_RSYNC
+  rsync            deploy $(DESTDIR_TP)/ to $(SSH_HOST):$(SSH_PATH)
+endef
+
+define HELP_RSYNC_DATA
+  rsync-data       deploy $(STUDENT_DATA_DIR)/ to $(SSH_STUDENT_DATA)
+endef
+
+define HELP_TEXT
+
+Build
+  student          student notebooks (local + Colab) + uv zip
+  teacher          teacher notebooks (local + Colab, with solutions)
+  solution         student-facing solution / corrigé (local + Colab, with
+                   solutions, no instructor cells/markers/tag comments)
+  bundle           the uv-ready student zip only$(if $(BUNDLE_WITH_NOTEBOOKS),, (env only, no notebooks))
+  all              student + teacher
+  clean            remove generated notebooks, $(TEACHER_DIR)/, zip, $(DEPDIR), $(TESTED_DIR)
+
+Check the sources (run them as scripts, pass/fail)
+  check            run every source with internal imports RESOLVED (the exact
+                   inlined code students get) at profile $(CHECK_PROFILE), output
+                   $(CHECK_OUTPUT); pass/fail under $(RESOLVED_DIR)/. The gate that
+                   matches the built notebooks.
+                     CHECK_PROFILE / CHECK_OUTPUT / CHECK_TIMEOUT to adjust
+  check:<name>     a single source (e.g. make check:$(firstword $(NAMES)))
+  check-raw        every source as a plain script (imports the full $(SRC_ROOT)/):
+                   faster and looser, for early debugging; misses inlining bugs
+  check-raw:<name> raw run of a single source
+  show-tests       last 'check' pass/fail per source
+  show-raw         last 'check-raw' pass/fail per source
+  check-bundle     verify the zip resolves with uv (no install)$(if $(RESOURCES_PY),
+$(HELP_RESOURCES))
+
+Run the teacher notebooks (execute them, keep the result)
+  run-teacher      every teacher notebook through Jupyter, at profile
+                   '$(RUN_PROFILE_LABEL)'; executed notebooks and logs in $(RUN_DIR)/.
+                   A notebook is re-run when its source changed, when the
+                   profile changed, or when the last run failed — otherwise
+                   it is skipped.
+                     NOTEBOOK_PROFILE  fast-test|small|low-gpu|high-gpu;
+                                       unset (the default) auto-detects
+                     RUN_TIMEOUT       seconds before a notebook is given up
+                     RUN_OUTPUT        notebook|console|off (now: $(RUN_OUTPUT))
+  run-teacher:<name>  same, for one notebook
+  check-teacher    the same runner as a smoke test: NOTEBOOK_PROFILE=$(RUN_CHECK_PROFILE)
+                   and no figures. 'check-teacher:<name>' for one.
+  run-again        forget the stamps, keep the notebooks
+  show-run         state, duration and path, per notebook
+
+Edit
+  lab              JupyterLab on the teacher notebooks (built first)
+  lab-test         same, at profile $(LAB_PROFILE): reduced datasets and training,
+                   figures still shown$(if $(or $(SSH_HOST),$(SSH_STUDENT_DATA)),
+
+Deploy)$(if $(SSH_HOST),
+$(HELP_RSYNC))$(if $(SSH_STUDENT_DATA),
+$(HELP_RSYNC_DATA))
+endef
+export HELP_TEXT
+
+define HELP_FOOTER
+
+Layout: <name>.ipynb next to the sources' output dir, Colab variants under
+        $(COLAB_SUBDIR)/ — $(DESTDIR_TP)/$(COLAB_SUBDIR)/<name>.ipynb,
+        $(TEACHER_DIR)/$(COLAB_SUBDIR)/<name>.ipynb, $(SOLUTION_DIR)/$(COLAB_SUBDIR)/<name>.ipynb
+
+Sources: $(NAMES)
+endef
+export HELP_FOOTER
+
+.PHONY: help
+help:
+	@echo "Practicals (jupytext-notebook-helper) — make targets"
+	@printf '%s\n' "$$HELP_TEXT"
+	@[ -z "$$HELP_PROJECT" ] || printf '\n%s\n' "$$HELP_PROJECT"
+	@printf '%s\n' "$$HELP_FOOTER"
 
 # ---- bookkeeping ----
 # Auto-dependency files (listing the internal src/ modules inlined into each
