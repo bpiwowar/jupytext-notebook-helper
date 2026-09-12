@@ -678,9 +678,7 @@ def process(  # noqa: C901
                         pass
                     else:
                         message = custom_assert or "Not implemented yet"
-                        lines.append(
-                            f"{student_space}assert False, {message!r}\n"
-                        )
+                        lines.append(f"{student_space}assert False, {message!r}\n")
                         custom_assert = None
                     hide = False
                 elif m := re_assert.match(line):
@@ -880,7 +878,19 @@ if args.depdir is not None:
     source = Path(args.source).name
 
     target = source.replace(".py", ".d")
-    target_s = "student/" + source.replace(".py", ".student.ipynb")
-    target_t = "teacher/" + source.replace(".py", ".teacher.ipynb")
+    notebook = source.replace(".py", ".ipynb")
+    # Every variant tp.mk knows how to build. These used to be the pre-0.8
+    # `<name>.student.ipynb` spellings, which no rule produced any more, so the
+    # prerequisites attached to nothing and an edit to an inlined `src/` module
+    # never rebuilt a notebook.
+    targets = [
+        target,
+        f"student/{notebook}",
+        f"student/colab/{notebook}",
+        f"teacher/{notebook}",
+        f"teacher/colab/{notebook}",
+        f"solution/{notebook}",
+        f"solution/colab/{notebook}",
+    ]
     with (args.depdir / target).open("wt") as fp:
-        fp.write(f"""{target} {target_s} {target_t}: {" ".join(deps)}\n""")
+        fp.write(f"""{" ".join(targets)}: {" ".join(deps)}\n""")

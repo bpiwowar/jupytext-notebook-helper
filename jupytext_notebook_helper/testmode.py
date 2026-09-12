@@ -41,7 +41,10 @@ from __future__ import annotations
 
 import os
 import sys
+import warnings
 from typing import Any, Callable, Optional, Sequence
+
+from jupytext_notebook_helper import output
 
 __all__ = [
     "MODES",
@@ -124,6 +127,29 @@ _mode: str = _env_mode or "off"
 #: SKIP_PLOTS suppresses figures on its own, without touching ``test_mode``.
 _skip_plots_env: bool = os.environ.get("SKIP_PLOTS", "").lower() in _TRUTHY
 
+# `TESTING_MODE=full` meant "small datasets *and* no figures". Those are two
+# different questions, so `full` now only seeds the output half; the sizing half
+# is `NOTEBOOK_PROFILE`. Done once, here, so `output` owes nothing to this module.
+if _env_mode == "full" and output.env_output_mode() is None:
+    output.set_output_mode(output.OutputMode.OFF, verbose=False)
+
+#: Warn about `test_mode` once per session rather than on every read.
+_deprecation_warned = False
+
+
+def _warn_deprecated(what: str) -> None:
+    global _deprecation_warned
+    if _deprecation_warned:
+        return
+    _deprecation_warned = True
+    warnings.warn(
+        f"{what} is deprecated: how much work to do is now a "
+        "cached_hub.Profile ladder (NOTEBOOK_PROFILE), and where output goes "
+        "is NOTEBOOK_OUTPUT",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
 
 def current_test_mode() -> str:
     """Return the current mode: ``"off"``, ``"on"`` or ``"full"``."""
@@ -136,11 +162,17 @@ def env_test_mode() -> Optional[str]:
 
 
 def _test_mode_value() -> bool:
+    # Exactly the old meaning. Deriving it from whichever profile ladder was
+    # last touched would make an unrelated course's ladder change this flag,
+    # which is far too surprising for a name that only exists to keep working.
+    _warn_deprecated("test_mode")
     return _mode in ("on", "full")
 
 
 def _skip_plots_value() -> bool:
-    return _mode == "full" or _skip_plots_env
+    # SKIP_PLOTS still forces figures off on its own; everything else is now
+    # the output axis.
+    return _skip_plots_env or output.skip_figures()
 
 
 # ---------------------------------------------------------------------------
@@ -264,9 +296,15 @@ def set_test_mode(mode: Any, *, verbose: bool = True) -> str:
     """
     global _mode
 
+    _warn_deprecated("set_test_mode")
     new_mode = _parse_mode(mode)
     previous_skip = bool(skip_plots)
     _mode = new_mode
+    # `full` is the only one of the three that ever meant anything about output.
+    output.set_output_mode(
+        output.OutputMode.OFF if new_mode == "full" else output.default_output_mode(),
+        verbose=False,
+    )
     new_skip = bool(skip_plots)
 
     if new_skip != previous_skip:
@@ -399,7 +437,11 @@ def _reset_for_tests(
     skip_plots_env: bool = False,
 ) -> None:
     """Restore a known state (used by the test-suite)."""
-    global _mode, _env_mode, _skip_plots_env
+    global _mode, _env_mode, _skip_plots_env, _deprecation_warned
     _mode = _parse_mode(mode)
     _env_mode = None if env_mode is None else _parse_mode(env_mode)
     _skip_plots_env = skip_plots_env
+    _deprecation_warned = False
+    output._reset_for_tests()
+    if _mode == "full":
+        output.set_output_mode(output.OutputMode.OFF, verbose=False)

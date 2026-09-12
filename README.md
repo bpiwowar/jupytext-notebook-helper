@@ -94,26 +94,70 @@ things that otherwise bite you late:
 
 ## Runtime helpers
 
-A tiny import surface, meant for a **teacher-only** cell — students never see the
-test-mode machinery and the package is not required on Colab:
+Three questions a notebook has to answer, and they are not the same question:
+
+| Question | Answered by | Set with |
+|---|---|---|
+| What machine is this? | `hardware()` | detected; `NOTEBOOK_BACKEND` to force |
+| How much work should I do? | a `cached_hub.Profile` ladder | `NOTEBOOK_PROFILE` |
+| Where does output go? | `OutputMode` | `NOTEBOOK_OUTPUT` |
 
 ```python
-from jupytext_notebook_helper import *   # test_mode, skip_plots, print_header,
-                                         # is_notebook, set_test_mode, …
+from jupytext_notebook_helper import hardware
+from mycourse.profiles import Profile
+
+hw = hardware(Profile)
+MODEL = Profile.pick(fast_test="tiny/model", low_gpu="big/model")
+model = load_hf_model(MODEL, AutoModelForCausalLM, dtype=hw.dtype).to(hw.device)
 ```
 
-- `test_mode` / `skip_plots` — seeded by the `TESTING_MODE` env var
-  (`off` | `on` | `full`): reduce datasets/training when testing, and drop every
-  figure in `full`.
-- `SKIP_PLOTS=1` (`1`/`true`/`yes`/`on`) — drop the figures **without** touching
-  `test_mode`, for a full-size run whose log stays readable: each inline figure
-  is a few hundred kB of base64.
+### `hardware()`
+
+What the machine offers, and nothing about how hard to push it:
+
+- `hw.device` / `hw.backend` (`cuda` | `mps` | `cpu`) / `hw.total_memory_gb`.
+  **MPS counts as a GPU** — an Apple Silicon laptop with 128 GB of unified
+  memory is not a machine without one.
+- `hw.dtype` for inference (bf16 on CUDA, fp16 on MPS, fp32 on CPU) and
+  `hw.train_dtype` for training (bf16 on CUDA, fp32 elsewhere — LoRA in pure
+  fp16, without bf16's range, is unstable).
+- `hw.has_bitsandbytes` / `hw.has_vllm` / `hw.has_flash_attention` /
+  `hw.supports_bf16`: each is *the library imports* **and** *the backend
+  supports it*. Gate a section on these rather than on `device.type == "cuda"`,
+  which conflates "is this machine big" with "does this library exist here".
+- `hw.synchronize()` / `hw.empty_cache()` / `hw.memory_used_gb()`, so a notebook
+  stops writing the per-device branches by hand.
+- `NOTEBOOK_BACKEND=cpu` forces a backend, to reproduce a CPU-only run.
+
+`torch` is imported lazily: the build half of this package still works without
+it.
+
+### Where output goes
+
+`NOTEBOOK_OUTPUT` is `notebook` (figures inline), `console` (figures in the
+terminal through `imgcat`, INFO logging — what `make check` wants) or `off` (no
+figures at all: matplotlib pinned to `Agg`, `plt.show()` closes instead of
+drawing). Unset, it follows the context: inline under a kernel, console
+otherwise. `SKIP_PLOTS=1` still forces `off`.
+
+It is a **start-up** decision — matplotlib's backend cannot be swapped under a
+running kernel — so `set_output_mode()` warns when a change cannot take effect
+rather than pretending it did.
+
 - `print_header(title)` — a formatted header when run as a script;
   jupytext-filter turns it into a markdown header in notebooks.
-- On script execution (e.g. `make check`), `matplotlib.pyplot.show()` is patched
-  to render figures inline in the terminal via `imgcat` — unless `skip_plots`,
-  which is now honoured before the inline rendering (until 0.5.0 `full` still
-  wrote every figure to the terminal whenever `imgcat` was installed).
+
+### Deprecated: `test_mode` and `TESTING_MODE`
+
+```python
+from jupytext_notebook_helper import *   # test_mode, skip_plots, set_test_mode, …
+```
+
+`TESTING_MODE` answered two questions at once: `on` meant "small datasets",
+`full` meant "small datasets *and* no figures". Those are now the profile and
+the output mode. The old names keep working — a course that has not migrated is
+unaffected, and `TESTING_MODE=full` still turns figures off — but they emit a
+`DeprecationWarning`.
 
 ### Switching the mode from the notebook
 
@@ -295,20 +339,30 @@ Both accept a single source, e.g. `make check:tp1-embeddings` /
 `make check-raw:tp1-embeddings`, and record pass/fail (`make show-tests` /
 `make show-raw`).
 
+Both run at `CHECK_PROFILE` (default `fast-test`, the smallest rung — it is
+never auto-selected, so a check has to ask for it by name) with
+`CHECK_OUTPUT=off`. Set `CHECK_TIMEOUT=<seconds>` to kill a source that runs
+away, which turns a hung notebook into a `FAIL` instead of a stuck build:
+
+```sh
+make check CHECK_TIMEOUT=600
+make check CHECK_PROFILE=low-gpu NOTEBOOK_ENV="HF_HUB_OFFLINE=1"
+```
+
+`NOTEBOOK_ENV` goes into the environment of every check recipe, so adding a
+variable does not mean editing a rule.
+
 ### Interactively: `make lab` / `make lab-test`
 
 `make lab` builds the teacher notebooks and opens JupyterLab on them;
-`make lab-test` does the same with `TESTING_MODE=on` exported to the server, so
-every kernel runs on reduced datasets/training **with plots still shown** (unlike
-`check`, which uses `full` and disables them). Only the teacher variant carries
-the `from jupytext_notebook_helper import *` cell, so this is the only build
-where `test_mode` exists.
+`make lab-test` does the same with `NOTEBOOK_PROFILE=$(LAB_PROFILE)` exported to
+the server, so every kernel starts on a reduced rung **with figures still
+shown** (unlike `check`, which asks for the smallest rung and turns output off).
 
-Since 0.8 `make lab` is usually enough: with no `TESTING_MODE` in the
-environment, the helper cell shows a toggle and the mode can be switched from
-the notebook itself (see *Switching the mode from the notebook*), so `lab-test`
-is only useful to start **every** kernel of a session in `on` — and it then
-suppresses the toggle. Override `LAB_DIR`, `LAB` or `LAB_TEST_MODE` to point
+`make lab` is usually enough: with no `NOTEBOOK_PROFILE` in the environment the
+ladder shows a chooser and the profile can be switched from the notebook itself,
+so `lab-test` is only useful to pin **every** kernel of a session — and it then
+suppresses the chooser. Override `LAB_DIR`, `LAB` or `LAB_PROFILE` to point
 elsewhere (e.g. `make lab LAB_DIR=solution`).
 Edits made in Lab are **not** written back to `sources/` — the notebooks are
 build outputs.

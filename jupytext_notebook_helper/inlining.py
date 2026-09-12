@@ -99,10 +99,19 @@ class Imports:
             for name in names:
                 s += f"import {Imports.alias(module, name)}\n"
         for module, mapping in self.imports_from.items():
-            s += f"from {module} import " + ", ".join(
-                Imports.alias(name, alias) for alias, name in mapping.items()
-            )
-            s += "\n"
+            named = {alias: name for alias, name in mapping.items() if name != "*"}
+            if len(named) != len(mapping):
+                # `from x import *, y` is a syntax error, so the star gets a
+                # statement of its own. Two cells importing from one module,
+                # one with a star and one by name, is the normal shape as soon
+                # as a teacher-only `import *` sits beside an import that every
+                # build needs.
+                s += f"from {module} import *\n"
+            if named:
+                s += f"from {module} import " + ", ".join(
+                    Imports.alias(name, alias) for alias, name in named.items()
+                )
+                s += "\n"
         return s
 
     def set(self, name: str, value) -> bool:

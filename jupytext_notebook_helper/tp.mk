@@ -128,9 +128,10 @@ help:
 	@echo "  check-bundle     verify the zip resolves with uv (no install)"
 	@echo "  all              student + teacher"
 	@echo "  check            run every source with internal imports RESOLVED (the"
-	@echo "                   exact inlined code students get); TESTING_MODE, figures"
-	@echo "                   via imgcat, pass/fail under $(RESOLVED_DIR)/. This is the"
-	@echo "                   gate that matches the built notebooks."
+	@echo "                   exact inlined code students get) at profile"
+	@echo "                   $(CHECK_PROFILE), output $(CHECK_OUTPUT); pass/fail under"
+	@echo "                   $(RESOLVED_DIR)/. The gate that matches the built notebooks."
+	@echo "                   CHECK_PROFILE/CHECK_OUTPUT/CHECK_TIMEOUT to adjust."
 	@echo "  check:<name>     run a single source (e.g. make check:tp1-embeddings)"
 	@echo "  check-raw        run every source as a plain script (imports full src/):"
 	@echo "                   faster/looser, for early debugging; misses inlining bugs"
@@ -138,8 +139,8 @@ help:
 	@echo "  show-tests       show last 'check' pass/fail status per source"
 	@echo "  show-raw         show last 'check-raw' pass/fail status per source"
 	@echo "  lab              JupyterLab on the teacher notebooks (built first)"
-	@echo "  lab-test         same, with TESTING_MODE=$(LAB_TEST_MODE): reduced"
-	@echo "                   datasets/training, plots still shown"
+	@echo "  lab-test         same, at profile $(LAB_PROFILE): reduced datasets and"
+	@echo "                   training, figures still shown"
 	@echo "  clean            remove generated notebooks, teacher/, zip, $(DEPDIR), $(TESTED_DIR)"
 	@echo "                   (also the pre-0.8 <name>.colab.ipynb outputs)"
 	@echo ""
@@ -250,6 +251,25 @@ check-bundle: $(ZIP)
 # effect that was not inlined) surfaces here as a NameError / runtime error —
 # at the real source location. This is what students actually get, so it is the
 # default `check`. Use `check-raw` for the looser, faster script run.
+# ---- running the sources -------------------------------------------------
+# How much work an automated run does, and where its output goes. `fast-test`
+# is never auto-selected, so a check has to ask for it by name. TESTING_MODE is
+# the pre-profile spelling, kept so that a course which has not migrated still
+# runs small here.
+CHECK_PROFILE      ?= fast-test
+CHECK_OUTPUT       ?= off
+CHECK_TESTING_MODE ?= full
+# Seconds before a runaway source is killed; empty means no limit. perl rather
+# than timeout(1), which BSD/macOS does not ship.
+CHECK_TIMEOUT      ?=
+# Anything else to put in the environment, without editing a recipe:
+#   make check NOTEBOOK_ENV="HF_HUB_OFFLINE=1 TOKENIZERS_PARALLELISM=false"
+NOTEBOOK_ENV       ?=
+
+CHECK_ENV = NOTEBOOK_PROFILE=$(CHECK_PROFILE) NOTEBOOK_OUTPUT=$(CHECK_OUTPUT) \
+            TESTING_MODE=$(CHECK_TESTING_MODE) $(NOTEBOOK_ENV)
+CHECK_LIMIT = $(if $(CHECK_TIMEOUT),perl -e 'alarm shift @ARGV; exec @ARGV or die' $(CHECK_TIMEOUT),)
+
 # `make check:<name>` runs a single source.
 check\:%:
 	@$(MAKE) $(RESOLVED_DIR)/$*.resolved
@@ -257,7 +277,7 @@ check\:%:
 $(RESOLVED_DIR)/%.resolved: $(SOURCES_DIR)/%.py | $(RESOLVED_DIR)
 	@rm -f $(RESOLVED_DIR)/$*.failed $@
 	@echo "== $* =="
-	@TESTING_MODE=full $(RUN) $< \
+	@$(CHECK_ENV) $(CHECK_LIMIT) $(RUN) $< \
 		&& (touch $@ && printf '\033[32m  PASS %s\033[0m\n' "$*") \
 		|| (touch $(RESOLVED_DIR)/$*.failed && printf '\033[31m  FAIL %s\033[0m\n' "$*")
 
@@ -284,7 +304,7 @@ check-raw\:%:
 $(TESTED_DIR)/%.tested: $(SOURCES_DIR)/%.py | $(TESTED_DIR)
 	@rm -f $(TESTED_DIR)/$*.failed $@
 	@echo "== $* (raw) =="
-	@TESTING_MODE=full $(PYTHON) python $< \
+	@$(CHECK_ENV) $(CHECK_LIMIT) $(PYTHON) python $< \
 		&& (touch $@ && printf '\033[32m  PASS %s\033[0m\n' "$*") \
 		|| (touch $(TESTED_DIR)/$*.failed && printf '\033[31m  FAIL %s\033[0m\n' "$*")
 
@@ -302,27 +322,26 @@ show-raw:
 	done
 
 # ---- lab: JupyterLab on the built teacher notebooks ----
-# Only the teacher variant keeps the `from jupytext_notebook_helper import *`
-# cell, so `test_mode` (and the [[remove]] blocks that use it) exist there and
-# nowhere else — hence $(LAB_DIR) defaults to $(TEACHER_DIR).
+# $(LAB_DIR) defaults to $(TEACHER_DIR): only the teacher variant keeps the
+# `from jupytext_notebook_helper import *` cell and the [[remove]] blocks.
 #
-# `lab-test` exports TESTING_MODE for the whole server, and the helper reads it
-# at import: the mode is therefore fixed per *kernel* (restart the kernel after
-# changing your mind, restart the server to change the value). `on`, not `full`
-# as in `check`: reduced datasets and training, but plots must stay visible when
-# working interactively.
+# `lab-test` exports NOTEBOOK_PROFILE for the whole server, and the ladder reads
+# it at import, so the rung is fixed per *kernel* — restart the kernel to change
+# your mind, the server to change the value. Or leave it unset (`make lab`) and
+# use the in-notebook chooser. A middle rung rather than `check`'s smallest:
+# reduced work, but output still worth looking at.
 #
 # Note that editing a notebook in Lab does NOT write back to $(SOURCES_DIR):
 # $(LAB_DIR) holds build outputs, overwritten as soon as the source is newer.
 LAB_DIR       ?= $(TEACHER_DIR)
 LAB           ?= $(PYTHON) jupyter lab
-LAB_TEST_MODE ?= on
+LAB_PROFILE   ?= small
 
 lab: $(TEACHER_LOCAL)
 	$(LAB) $(LAB_DIR)
 
 lab-test: $(TEACHER_LOCAL)
-	TESTING_MODE=$(LAB_TEST_MODE) $(LAB) $(LAB_DIR)
+	NOTEBOOK_PROFILE=$(LAB_PROFILE) $(NOTEBOOK_ENV) $(LAB) $(LAB_DIR)
 
 # $(LEGACY_COLAB): pre-0.8 <name>.colab.ipynb outputs. $(TEACHER_DIR) and
 # $(SOLUTION_DIR) go away wholesale, but $(DESTDIR_TP) is only cleaned file by

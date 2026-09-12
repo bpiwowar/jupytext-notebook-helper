@@ -583,3 +583,27 @@ def test_resolver_drops_unused_dotted_import(tmp_path):
     )
     result = resolver.resolve("lib", [("plain", "plain")])
     assert result.external == []
+
+
+def test_a_star_import_gets_its_own_statement():
+    """`from x import *, y` is a SyntaxError, and used to be emitted verbatim.
+
+    Two cells importing from the same module, one with a star and one by name,
+    is the normal shape once a teacher-only `import *` sits next to an import
+    every build needs.
+    """
+    imports = Imports()
+    imports.add("from helper import *")
+    imports.add("from helper import hardware")
+    code = imports.to_code()
+    compile(code, "<imports>", "exec")
+    assert "from helper import *" in code
+    assert "from helper import hardware" in code
+    assert "*," not in code
+
+
+def test_a_module_with_only_named_imports_stays_on_one_line():
+    imports = Imports()
+    imports.add("from helper import one")
+    imports.add("from helper import two")
+    assert imports.to_code().strip() == "from helper import one, two"

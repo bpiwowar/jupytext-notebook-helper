@@ -102,6 +102,7 @@ def test_assert_marker_kept_for_teacher_dropped_for_solution(tmp_path):
     assert "Write the answer first" not in solution
     assert "answer = 42" in solution
 
+
 # --------------------------------------------------------------------------- #
 # Automatic import gathering + internal inlining
 # --------------------------------------------------------------------------- #
@@ -590,3 +591,58 @@ def test_keep_imports_still_pins_the_package(tmp_path):
     ]
     assert "torch==2.6.*" in sources[0]  # kept in place, still installed
     assert "numpy==2.0.*" in sources[0]
+
+
+# --------------------------------------------------------------------------- #
+# Dependency files
+# --------------------------------------------------------------------------- #
+
+
+def test_depfile_targets_are_the_ones_tp_mk_builds(tmp_path):
+    """The prerequisites have to hang off targets that a rule actually makes.
+
+    They used to be the pre-0.8 `student/<name>.student.ipynb` spellings, which
+    no rule produced any more — so editing an inlined `src/` module rebuilt
+    nothing and `make clean` was the only way out.
+    """
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "mylib.py").write_text("VALUE = 1\n")
+    source = tmp_path / "tp1-embeddings.py"
+    source.write_text(
+        textwrap.dedent(
+            """
+            # %%
+            from mylib import VALUE
+
+            # %%
+            print(VALUE)
+            """
+        ).lstrip()
+    )
+    depdir = tmp_path / ".deps"
+    depdir.mkdir()
+
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "jupytext_notebook_helper.filter",
+            "--depdir",
+            str(depdir),
+            "--src-root",
+            str(src),
+            str(source),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    written = (depdir / "tp1-embeddings.d").read_text()
+    targets = written.split(":", 1)[0].split()
+    assert "student/tp1-embeddings.ipynb" in targets
+    assert "student/colab/tp1-embeddings.ipynb" in targets
+    assert "teacher/tp1-embeddings.ipynb" in targets
+    assert "teacher/colab/tp1-embeddings.ipynb" in targets
+    assert not [t for t in targets if ".student.ipynb" in t or ".teacher.ipynb" in t]
