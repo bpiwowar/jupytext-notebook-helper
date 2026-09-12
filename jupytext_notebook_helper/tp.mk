@@ -511,6 +511,46 @@ rsync-data:
 		$(STUDENT_DATA_DIR)/ $(SSH_STUDENT_DATA):$(SSH_STUDENT_DATA_PATH)
 endif
 
+# ---- practicals manifest --------------------------------------------------
+# A JSON description of the practicals — id, display name, the files each one
+# produces and the URL they are served from — for whatever announces them: a
+# slide deck's index page, a course site. See manifest.py for the schema.
+#
+# It reads the sources' headers and builds nothing, so the consumer can refresh
+# it before every one of its own builds. Nothing happens unless MANIFEST names
+# a file to write:
+#
+#     make manifest MANIFEST=../slides/practicals.json \
+#                   MANIFEST_RELATIVE_TO=host:/srv/course/slides
+#
+MANIFEST              ?=
+# Where the notebooks are served from, as the manifest's reader sees them.
+# Either said outright, or worked out from the two deployment paths: $(SSH_PATH)
+# is where `make rsync` puts the notebooks, MANIFEST_RELATIVE_TO where the
+# reader puts itself.
+MANIFEST_BASE_URL     ?=
+MANIFEST_RELATIVE_TO  ?=
+# Labels the reader shows for the two variants of each notebook.
+MANIFEST_LOCAL_LABEL  ?= Notebook
+MANIFEST_COLAB_LABEL  ?= Colab
+# Header key (under jupyter.metadata) holding a practical's display name.
+MANIFEST_NAME_KEY     ?= practical_name
+
+.PHONY: manifest
+manifest:
+	@test -n "$(MANIFEST)" || { \
+		echo "ERROR: MANIFEST is not set — name the file to write, e.g."; \
+		echo "       make manifest MANIFEST=../slides/practicals.json"; \
+		exit 1; }
+	@$(PYTHON) python -m jupytext_notebook_helper.manifest \
+		--sources $(SOURCES_DIR) --colab-subdir "$(COLAB_SUBDIR)" \
+		--output $(MANIFEST) --name-key "$(MANIFEST_NAME_KEY)" \
+		--local-label "$(MANIFEST_LOCAL_LABEL)" \
+		--colab-label "$(MANIFEST_COLAB_LABEL)" \
+		$(if $(MANIFEST_BASE_URL),--base-url "$(MANIFEST_BASE_URL)") \
+		$(if $(MANIFEST_RELATIVE_TO),--deploy-path "$(if $(strip $(SSH_HOST)),$(strip $(SSH_HOST)):)$(SSH_PATH)" \
+			--relative-to "$(MANIFEST_RELATIVE_TO)")
+
 # ---- help -----------------------------------------------------------------
 # One section per kind of work. A course adds its own section by defining and
 # EXPORTING HELP_PROJECT (printed last):
@@ -550,6 +590,10 @@ Build
                    solutions, no instructor cells/markers/tag comments)
   bundle           the uv-ready student zip only$(if $(BUNDLE_WITH_NOTEBOOKS),, (env only, no notebooks))
   all              student + teacher
+  manifest         JSON description of the practicals (ids, names, files, URL)
+                   for whatever announces them — reads the headers only, builds
+                   no notebook. Needs MANIFEST=<file>; MANIFEST_BASE_URL or
+                   MANIFEST_RELATIVE_TO says where they are served from.
   clean            remove generated notebooks, $(TEACHER_DIR)/, zip, $(DEPDIR), $(TESTED_DIR)
 
 Check the sources (run them as scripts, pass/fail)
