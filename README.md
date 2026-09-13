@@ -138,7 +138,7 @@ it.
 terminal through `imgcat`, INFO logging — what `make check` wants) or `off` (no
 figures at all: matplotlib pinned to `Agg`, `plt.show()` closes instead of
 drawing). Unset, it follows the context: inline under a kernel, console
-otherwise. `SKIP_PLOTS=1` still forces `off`.
+otherwise.
 
 It is a **start-up** decision — matplotlib's backend cannot be swapped under a
 running kernel — so `set_output_mode()` warns when a change cannot take effect
@@ -147,64 +147,10 @@ rather than pretending it did.
 - `print_header(title)` — a formatted header when run as a script;
   jupytext-filter turns it into a markdown header in notebooks.
 
-### Deprecated: `test_mode` and `TESTING_MODE`
-
-```python
-from jupytext_notebook_helper import *   # test_mode, skip_plots, set_test_mode, …
-```
-
-`TESTING_MODE` answered two questions at once: `on` meant "small datasets",
-`full` meant "small datasets *and* no figures". Those are now the profile and
-the output mode. The old names keep working — a course that has not migrated is
-unaffected, and `TESTING_MODE=full` still turns figures off — but they emit a
-`DeprecationWarning`.
-
-### Switching the mode from the notebook
-
-`test_mode` is not a value captured at import but a **live proxy**: `if
-test_mode:` asks for the current mode each time it runs. It still behaves like
-the `bool` it replaces (`if`, `not`, `x if test_mode else y`,
-`test_mode == True`, `int(test_mode)`, `f"{test_mode}"`); the only difference is
-`test_mode is True`, which no course used.
-
-- `set_test_mode("on" | "off" | "full")` — switch by hand, anywhere (also
-  accepts `True` / `False`). Cells run *afterwards* see the new value; cells
-  already executed of course keep the sizes they computed, so switch near the
-  top, before the compute cells.
-- `select_test_mode()` — display an `ipywidgets` toggle (`off` / `on`) in a
-  notebook. It is called automatically when the package is imported from a
-  notebook and `TESTING_MODE` is **not** set, so existing teacher notebooks get
-  the chooser without any change; `TESTING_MODE_WIDGET=0` disables that
-  automatic call, and an explicit call always displays it (useful if the cell
-  was re-run, which clears its output).
-- `current_test_mode()` — `"off"`, `"on"` or `"full"`.
-
-What is *not* switchable at run time: **figure suppression**. `full` drops
-figures by pinning matplotlib to `Agg` at import, and a notebook renders figures
-through the inline backend at the end of each cell, not through the `plt.show()`
-this package patches (that patch is script-only). So `full` stays a start-up
-decision (`TESTING_MODE=full`, `SKIP_PLOTS=1`) — exactly how `make check` /
-`make check-teacher` use it. The in-notebook chooser therefore only offers
-`off` / `on`, and `set_test_mode("full")` inside a notebook says that the
-figures stay as they are instead of pretending otherwise.
-
-`TESTING_MODE`, when set, gives the initial mode **and** suppresses the chooser:
-a script run, `make check` and `make check-teacher` behave exactly as before — no
-widget, no prompt, no extra output, and nothing that ever waits for input
-outside a notebook. It is not a lock: an explicit `set_test_mode(...)` from the
-teacher still wins (a lock would defeat the point under `make lab-test`).
-
-`ipywidgets` is an **optional** dependency
-(`pip install "jupytext-notebook-helper[widgets]"`). Without it, the chooser
-degrades to a one-line hint pointing at `set_test_mode(...)`.
-
-The package was extracted from `master_mind.teaching.utils` so it can be reused
-across courses without pulling in the whole master-mind framework.
-
 ## Imports in the build
 
 The filter manages imports by *parsing* the source — no explicit `imports`/`copy`
-cell tags are needed anymore (they still work but warn that they are redundant).
+cell tags are needed.
 
 **Imports can live anywhere; they are gathered automatically.** You no longer
 have to keep imports in a dedicated cell (the old `imports`-tagged section):
@@ -485,20 +431,6 @@ Corpus (this repository)
 endef
 export HELP_PROJECT
 ```
-
-> **Upgrading from < 0.8.** The Colab notebooks used to be written next to the
-> local ones as `<name>.colab.ipynb`. A course usually has nothing to change in
-> its `Makefile`, but check three things:
->
-> - `make clean` once after upgrading — it deletes the stale
->   `<name>.colab.ipynb` files, which would otherwise stay on disk (and keep
->   being deployed) forever;
-> - a `.gitignore` listing `*.colab.ipynb` explicitly must gain the
->   `colab/` directories (a `.gitignore` that ignores `student/`, `teacher/`
->   and `solution/` wholesale needs nothing);
-> - a deployment command that filters on file names — a typical
->   `rsync --include "*.ipynb" --exclude "*"` never descends into a directory
->   it has not been told to include, so it needs `--include "colab/"` as well.
 
 ### Course settings in `pyproject.toml`
 

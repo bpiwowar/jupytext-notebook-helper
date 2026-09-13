@@ -1,8 +1,5 @@
 """Runtime helpers for jupytext-percent teaching notebooks.
 
-Extracted from ``master_mind.teaching.utils`` so it can be shared across courses
-without depending on the whole master-mind framework.
-
 Two questions a notebook has to answer, kept apart:
 
 ``hardware()``
@@ -31,12 +28,6 @@ filter turns it into a markdown header in notebooks) and ``is_notebook``.
 Usage in a notebook cell::
 
     from jupytext_notebook_helper import *
-
-Deprecated: ``test_mode`` / ``skip_plots`` / ``TESTING_MODE``. ``TESTING_MODE``
-conflated "use small data" with "draw no figures"; the first is now a profile
-and the second is ``NOTEBOOK_OUTPUT``. The old names keep working — courses
-still on them are unaffected — and ``TESTING_MODE=full`` still turns figures
-off. See ``jupytext_notebook_helper.testmode``.
 """
 
 import io
@@ -47,6 +38,7 @@ from jupytext_notebook_helper.machine import (  # noqa: F401
     Hardware,
     hardware,
 )
+from jupytext_notebook_helper.notebook import is_notebook  # noqa: F401
 from jupytext_notebook_helper.output import (  # noqa: F401
     ENV_OUTPUT,
     OutputMode,
@@ -55,20 +47,6 @@ from jupytext_notebook_helper.output import (  # noqa: F401
     mark_applied,
     set_output_mode,
     skip_figures,
-)
-from jupytext_notebook_helper.testmode import (  # noqa: F401
-    MODES,
-    SWITCHABLE_MODES,
-    LiveFlag,
-    _apply_plot_backend,
-    _auto_select,
-    current_test_mode,
-    env_test_mode,
-    is_notebook,
-    select_test_mode,
-    set_test_mode,
-    skip_plots,
-    test_mode,
 )
 
 __all__ = [
@@ -81,18 +59,18 @@ __all__ = [
     "set_output_mode",
     "print_header",
     "is_notebook",
-    # deprecated: see jupytext_notebook_helper.testmode
-    "test_mode",
-    "skip_plots",
-    "set_test_mode",
-    "select_test_mode",
-    "current_test_mode",
 ]
 
 _output_mode = current_output_mode()
 
 # Figures are dropped: pin matplotlib to Agg before anything imports pyplot.
-_apply_plot_backend()
+if skip_figures():
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+    except ImportError:  # pragma: no cover - matplotlib is a hard dependency
+        pass
 
 
 def print_header(title: str):
@@ -130,9 +108,7 @@ def _patch_matplotlib():
     _original_show = plt.show
 
     def _patched_show(*args, **kwargs):
-        # ``skip_plots`` is read here, not captured: a script that switches mode
-        # mid-run (rare, but ``set_test_mode`` allows it) is honoured.
-        if skip_plots:
+        if skip_figures():
             # Avant tout rendu : imgcat écrivait la figure dans le terminal même
             # en mode « figures désactivées ».
             plt.close("all")
@@ -159,15 +135,12 @@ def _patch_matplotlib():
 
 # Outside a notebook, turn logging up and route figures through imgcat; with
 # output off, the same patch closes them instead. Inside a notebook there is
-# nothing to patch — the inline backend draws at the end of the cell — so offer
-# the chooser instead (a no-op when the mode is pinned or ipywidgets is absent).
+# nothing to patch — the inline backend draws at the end of the cell.
 if _output_mode is not OutputMode.NOTEBOOK:
     if _output_mode is OutputMode.CONSOLE:
         logging.basicConfig(
             level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s"
         )
     _patch_matplotlib()
-else:
-    _auto_select()
 
 mark_applied(_output_mode)

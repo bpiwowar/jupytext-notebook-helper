@@ -229,12 +229,9 @@ check-bundle: $(ZIP)
 # default `check`. Use `check-raw` for the looser, faster script run.
 # ---- running the sources -------------------------------------------------
 # How much work an automated run does, and where its output goes. `fast-test`
-# is never auto-selected, so a check has to ask for it by name. TESTING_MODE is
-# the pre-profile spelling, kept so that a course which has not migrated still
-# runs small here.
+# is never auto-selected, so a check has to ask for it by name.
 CHECK_PROFILE      ?= fast-test
 CHECK_OUTPUT       ?= off
-CHECK_TESTING_MODE ?= full
 # Seconds before a runaway source is killed; empty means no limit. perl rather
 # than timeout(1), which BSD/macOS does not ship.
 CHECK_TIMEOUT      ?=
@@ -243,7 +240,7 @@ CHECK_TIMEOUT      ?=
 NOTEBOOK_ENV       ?=
 
 CHECK_ENV = NOTEBOOK_PROFILE=$(CHECK_PROFILE) NOTEBOOK_OUTPUT=$(CHECK_OUTPUT) \
-            TESTING_MODE=$(CHECK_TESTING_MODE) $(NOTEBOOK_ENV)
+            $(NOTEBOOK_ENV)
 CHECK_LIMIT = $(if $(CHECK_TIMEOUT),perl -e 'alarm shift @ARGV; exec @ARGV or die' $(CHECK_TIMEOUT),)
 
 # `make check:<name>` runs a single source.

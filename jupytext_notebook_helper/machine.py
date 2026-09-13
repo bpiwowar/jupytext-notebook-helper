@@ -256,8 +256,8 @@ def _report_profile_state(profiles: Any) -> None:
     This note says where both stand, whether or not the widget itself ends up
     showing (``NOTEBOOK_PROFILE`` or a missing ``ipywidgets`` silence it).
     """
+    from jupytext_notebook_helper.notebook import is_notebook
     from jupytext_notebook_helper.output import current_output_mode
-    from jupytext_notebook_helper.testmode import is_notebook
 
     if not is_notebook():
         return

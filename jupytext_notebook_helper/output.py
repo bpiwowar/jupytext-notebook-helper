@@ -16,11 +16,6 @@ three places and each wants something different:
 Left alone, the mode follows the context: ``notebook`` under a kernel,
 ``console`` otherwise. ``NOTEBOOK_OUTPUT`` overrides it.
 
-This used to be the difference between ``TESTING_MODE=on`` and ``=full``, which
-also cut the datasets down. The two have nothing to do with each other — how
-much work to do is :class:`cached_hub.Profile`'s question — so they are now
-separate knobs.
-
 Choosing the mode is a *start-up* decision: matplotlib's backend cannot be
 swapped under a running kernel, so :func:`set_output_mode` reports a change it
 cannot apply rather than pretending.
@@ -30,8 +25,6 @@ Environment variables
 ``NOTEBOOK_OUTPUT``
     ``notebook``, ``console`` or ``off``. Unparseable values warn and are
     ignored.
-``SKIP_PLOTS``
-    Legacy: ``1``/``true``/``yes``/``on`` forces ``off``.
 """
 
 import logging
@@ -43,9 +36,6 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 ENV_OUTPUT = "NOTEBOOK_OUTPUT"
-ENV_SKIP_PLOTS = "SKIP_PLOTS"
-
-_TRUTHY = {"1", "true", "yes", "on"}
 
 
 class OutputMode(Enum):
@@ -80,7 +70,7 @@ def _parse(raw: str) -> Optional[OutputMode]:
 
 
 def env_output_mode() -> Optional[OutputMode]:
-    """Mode named by ``NOTEBOOK_OUTPUT`` (or legacy ``SKIP_PLOTS``)."""
+    """Mode named by ``NOTEBOOK_OUTPUT``."""
     raw = os.environ.get(ENV_OUTPUT)
     if raw is not None and raw.strip():
         mode = _parse(raw)
@@ -93,15 +83,12 @@ def env_output_mode() -> Optional[OutputMode]:
             )
         else:
             return mode
-    legacy = os.environ.get(ENV_SKIP_PLOTS)
-    if legacy is not None and legacy.strip().lower() in _TRUTHY:
-        return OutputMode.OFF
     return None
 
 
 def default_output_mode() -> OutputMode:
     """Inline under a kernel, terminal otherwise."""
-    from jupytext_notebook_helper.testmode import is_notebook
+    from jupytext_notebook_helper.notebook import is_notebook
 
     return OutputMode.NOTEBOOK if is_notebook() else OutputMode.CONSOLE
 

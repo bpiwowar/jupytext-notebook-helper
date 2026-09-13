@@ -35,7 +35,7 @@ import re
 import sys
 from functools import partial
 from pathlib import Path
-from typing import List, Optional, Set, Union
+from typing import List, Optional, Union
 
 import jupytext
 import nbformat
@@ -203,18 +203,6 @@ PIP_FORCE_INCLUDE |= set(_course_config.pip_force_include) | set(
 # Resolves `from <internal> import ...` against src-root and inlines the needed
 # symbols (with their transitive dependencies) instead of importing them.
 resolver = InternalResolver(src_root=args.src_root)
-
-# Old explicit-marker tags (`imports`, `copy`) are no longer needed: imports are
-# now gathered from anywhere and internal imports inlined automatically. Warn
-# once per tag if a source still uses them.
-_deprecated_tags_warned: Set[str] = set()
-
-
-def _warn_deprecated_tag(tag: str, message: str) -> None:
-    if tag not in _deprecated_tags_warned:
-        _deprecated_tags_warned.add(tag)
-        logging.warning("the %r cell tag is no longer necessary: %s", tag, message)
-
 
 teacher_mode = args.teacher
 solution_mode = args.solution
@@ -594,13 +582,6 @@ def process(  # noqa: C901
         ):
             continue
 
-        if "imports" in tags:
-            # Imports are now gathered from every cell automatically; the tag is
-            # kept working (the cell is processed normally below) but redundant.
-            _warn_deprecated_tag(
-                "imports", "imports are now gathered from every cell automatically"
-            )
-
         if "pip" in tags:
             assert cell["source"].strip() == "", "cells tagged with pip should be empty"
             # Rendering is deferred until the whole document has been processed,
@@ -610,14 +591,6 @@ def process(  # noqa: C901
             pip_cells.append(cell)
             cells.append(cell)
             continue
-
-        if "copy" in tags:
-            # The `from <internal> import ...` lines in this cell are now inlined
-            # by rewrite_cell_imports below; the whole-module copy is gone.
-            _warn_deprecated_tag(
-                "copy",
-                "use `from <module> import <names>` and the module is inlined",
-            )
 
         if cell_type == "markdown":
             process_markdown(path, cell["source"], lines, deps)

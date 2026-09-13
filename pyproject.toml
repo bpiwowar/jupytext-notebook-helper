@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "jupytext-notebook-helper"
 authors = [{ name = "Benjamin Piwowarski", email = "benjamin@piwowarski.fr" }]
-description = "Runtime helpers + build tooling for jupytext-percent teaching notebooks: test mode, terminal image display, and student/teacher/colab generation"
+description = "Runtime helpers + build tooling for jupytext-percent teaching notebooks: hardware/profile detection, terminal image display, and student/teacher/colab generation"
 readme = "README.md"
 license = { text = "MIT" }
 keywords = ["jupyter", "jupytext", "teaching", "notebook"]
@@ -37,11 +37,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# In-notebook test-mode chooser (teacher notebooks only). Optional: without it,
-# the mode still comes from TESTING_MODE and `set_test_mode(...)`.
-widgets = [
-    "ipywidgets>=8",
-]
 dev = [
     "pytest>=8",
     "ruff>=0.8",

@@ -7,21 +7,20 @@ import types
 import pytest
 
 from jupytext_notebook_helper import machine as hw_module
+from jupytext_notebook_helper import notebook as notebook_module
 from jupytext_notebook_helper import output as output_module
-from jupytext_notebook_helper import testmode as tm_module
 from jupytext_notebook_helper.machine import ENV_BACKEND, hardware
 from jupytext_notebook_helper.output import (
     ENV_OUTPUT,
     OutputMode,
     current_output_mode,
     set_output_mode,
-    skip_figures,
 )
 
 
 @pytest.fixture(autouse=True)
 def clean(monkeypatch):
-    for name in (ENV_BACKEND, ENV_OUTPUT, "SKIP_PLOTS"):
+    for name in (ENV_BACKEND, ENV_OUTPUT):
         monkeypatch.delenv(name, raising=False)
     hw_module._reset_for_tests()
     output_module._reset_for_tests()
@@ -57,19 +56,6 @@ def test_an_unparseable_output_mode_warns_and_is_ignored(monkeypatch, caplog):
     monkeypatch.setenv(ENV_OUTPUT, "sideways")
     assert current_output_mode() is OutputMode.CONSOLE
     assert "sideways" in caplog.text
-
-
-def test_skip_plots_still_forces_output_off(monkeypatch):
-    """The legacy spelling keeps working for courses that have not migrated."""
-    monkeypatch.setenv("SKIP_PLOTS", "1")
-    assert current_output_mode() is OutputMode.OFF
-    assert skip_figures()
-
-
-def test_notebook_output_wins_over_skip_plots(monkeypatch):
-    monkeypatch.setenv("SKIP_PLOTS", "1")
-    monkeypatch.setenv(ENV_OUTPUT, "console")
-    assert current_output_mode() is OutputMode.CONSOLE
 
 
 def test_set_output_mode_wins_over_the_environment(monkeypatch):
@@ -235,7 +221,7 @@ def test_pick_without_a_ladder_says_so(monkeypatch):
 def fake_notebook(monkeypatch):
     """Fake being inside a kernel for both this package's check and
     ``cached_hub``'s own (``Profile.select`` does not use ours)."""
-    monkeypatch.setattr(tm_module, "is_notebook", lambda: True)
+    monkeypatch.setattr(notebook_module, "is_notebook", lambda: True)
     try:
         import cached_hub.profile as cached_hub_profile
     except ImportError:

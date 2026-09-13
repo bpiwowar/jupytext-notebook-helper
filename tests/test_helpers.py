@@ -6,13 +6,6 @@ import jupytext_notebook_helper as h
 def test_public_api():
     assert callable(h.print_header)
     assert callable(h.is_notebook)
-    assert callable(h.set_test_mode)
-    assert callable(h.select_test_mode)
-    assert callable(h.current_test_mode)
-    # `test_mode` / `skip_plots` are live proxies (read at use time), not bools,
-    # but they behave like bools everywhere the notebooks use them.
-    assert isinstance(bool(h.test_mode), bool)
-    assert isinstance(bool(h.skip_plots), bool)
 
 
 def test_star_import_surface():
