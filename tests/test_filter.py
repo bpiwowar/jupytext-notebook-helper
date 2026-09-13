@@ -497,6 +497,8 @@ def test_colab_auto_inserts_pip_and_imports_before_first_code(tmp_path):
     assert "numpy==2.0.*" in sources[1]
     assert "import numpy as np" in sources[2]
     assert "x = np.zeros(3)" in sources[3]
+    # tagged like an explicit `pip`-tagged cell, so it collapses the same way
+    assert nb["cells"][1]["metadata"]["tags"] == ["colab", "pip", "hide-input"]
 
 
 def test_no_colab_flag_means_no_pip_cell(tmp_path):

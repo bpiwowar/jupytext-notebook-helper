@@ -839,11 +839,18 @@ for pip_cell in pip_cells:
 # placed explicitly (via a `pip`-tagged cell / a `# [[imports]]` marker).
 prelude: List[dict] = []
 
-# (1) Colab `%pip install` cell (auto-inserted in --colab builds).
+# (1) Colab `%pip install` cell (auto-inserted in --colab builds). Tagged like
+# an explicit `pip`-tagged cell would be, so it collapses in the notebook UI
+# the same way.
 if colab_mode and not pip_cells:
     pip_source = render_pip_cell(imports)
     if "%pip install" in pip_source:
-        prelude.append(nbformat.v4.new_code_cell(source=pip_source))
+        prelude.append(
+            nbformat.v4.new_code_cell(
+                source=pip_source,
+                metadata={"tags": ["colab", "pip", "hide-input"]},
+            )
+        )
 
 # (2) Gathered imports: replace the `# [[imports]]` marker if present, else queue
 # a new cell for the prelude.
