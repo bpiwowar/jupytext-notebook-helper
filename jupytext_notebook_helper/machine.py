@@ -247,12 +247,42 @@ class Hardware:
     __repr__ = __str__
 
 
+def _report_profile_state(profiles: Any) -> None:
+    """In a notebook, show the active rung and whether figures are drawn.
+
+    The interactive chooser (:meth:`Profile.select`) only ever offers the
+    profile — figure visibility is a start-up decision (``NOTEBOOK_OUTPUT``),
+    not something a running kernel can flip, so it stays out of that widget.
+    This note says where both stand, whether or not the widget itself ends up
+    showing (``NOTEBOOK_PROFILE`` or a missing ``ipywidgets`` silence it).
+    """
+    from jupytext_notebook_helper.output import current_output_mode
+    from jupytext_notebook_helper.testmode import is_notebook
+
+    if not is_notebook():
+        return
+    profiles.select(auto=True)
+    active = profiles.current()
+    description = (profiles.describe(active) or "").strip()
+    label = f"{active.name} — {description}" if description else active.name
+    figures = "shown" if current_output_mode().shows_figures else "off"
+    text = f"Profile: {label} · images: {figures}"
+    try:
+        from IPython.display import HTML, display
+
+        display(HTML(f"<i>{text}</i>"))
+    except ImportError:
+        print(f"#># {text}")  # noqa: T201
+
+
 def hardware(profiles: Any = None, *, refresh: bool = False) -> Hardware:
     """Describe this machine, once, and let ``profiles`` size itself to it.
 
     ``profiles`` is a :class:`cached_hub.Profile` subclass. When given, its
     :meth:`detect` maps this machine to a rung, recorded as the default — so
-    ``NOTEBOOK_PROFILE`` and the widget still win.
+    ``NOTEBOOK_PROFILE`` and the widget still win. In a notebook, this also
+    shows the chooser and a note on the active rung and figure visibility —
+    see :func:`_report_profile_state`.
     """
     global _hardware
     if _hardware is None or refresh:
@@ -268,6 +298,7 @@ def hardware(profiles: Any = None, *, refresh: bool = False) -> Hardware:
 
     if profiles is not None:
         profiles.set_detected(profiles.detect(_hardware))
+        _report_profile_state(profiles)
     return _hardware
 
 

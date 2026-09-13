@@ -1,11 +1,14 @@
 """Tests for hardware detection and the output axis."""
 
 import builtins
+import sys
+import types
 
 import pytest
 
 from jupytext_notebook_helper import machine as hw_module
 from jupytext_notebook_helper import output as output_module
+from jupytext_notebook_helper import testmode as tm_module
 from jupytext_notebook_helper.machine import ENV_BACKEND, hardware
 from jupytext_notebook_helper.output import (
     ENV_OUTPUT,
@@ -221,3 +224,104 @@ def test_pick_without_a_ladder_says_so(monkeypatch):
     hw = hardware(refresh=True)
     with pytest.raises(RuntimeError, match="without a profile ladder"):
         hw.pick(200, small=40)
+
+
+# ---------------------------------------------------------------------------
+# In a notebook: the chooser (just the profile) plus a note on both axes
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_notebook(monkeypatch):
+    """Fake being inside a kernel for both this package's check and
+    ``cached_hub``'s own (``Profile.select`` does not use ours)."""
+    monkeypatch.setattr(tm_module, "is_notebook", lambda: True)
+    try:
+        import cached_hub.profile as cached_hub_profile
+    except ImportError:
+        return
+    monkeypatch.setattr(cached_hub_profile, "is_notebook", lambda: True)
+
+
+class _FakeWidget:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+    def observe(self, handler, names=None):
+        pass
+
+
+def _install_fake_ipywidgets(monkeypatch, displayed):
+    """Fake ``ipywidgets`` (used by ``Profile.select``) and ``IPython.display``
+    (used by both ``Profile.select`` and the note this module adds)."""
+    widgets = types.ModuleType("ipywidgets")
+    widgets.ToggleButtons = _FakeWidget
+    widgets.HTML = _FakeWidget
+    widgets.VBox = lambda children: children
+
+    display_module = types.ModuleType("IPython.display")
+    display_module.display = displayed.append
+    display_module.HTML = lambda text: ("HTML", text)
+
+    monkeypatch.setitem(sys.modules, "ipywidgets", widgets)
+    monkeypatch.setitem(sys.modules, "IPython.display", display_module)
+
+
+def test_hardware_reports_profile_and_images_in_a_notebook(monkeypatch, fake_notebook):
+    displayed = []
+    _install_fake_ipywidgets(monkeypatch, displayed)
+    monkeypatch.setenv(ENV_BACKEND, "cpu")
+    monkeypatch.setenv(ENV_OUTPUT, "off")
+    Profile = _ladder()
+
+    hardware(Profile, refresh=True)
+
+    # The chooser (cached_hub, profile only) and this module's note both show.
+    assert len(displayed) == 2
+    assert displayed[-1] == ("HTML", "<i>Profile: SMALL · images: off</i>")
+
+
+def test_hardware_reflects_the_active_rung_and_visible_figures(monkeypatch, fake_notebook):
+    displayed = []
+    _install_fake_ipywidgets(monkeypatch, displayed)
+    monkeypatch.setenv(ENV_BACKEND, "cpu")
+    monkeypatch.setenv("NOTEBOOK_PROFILE", "fast-test")
+    monkeypatch.setenv(ENV_OUTPUT, "notebook")
+    Profile = _ladder()
+
+    hardware(Profile, refresh=True)
+
+    assert displayed[-1] == ("HTML", "<i>Profile: FAST_TEST · images: shown</i>")
+
+
+def test_hardware_is_silent_outside_a_notebook(monkeypatch, capsys):
+    Profile = _ladder()
+    monkeypatch.setenv(ENV_BACKEND, "cpu")
+    hardware(Profile, refresh=True)
+    assert capsys.readouterr().out == ""
+
+
+def test_hardware_falls_back_to_a_print_without_ipython_display(
+    monkeypatch, fake_notebook, capsys
+):
+    """No ``ipywidgets``/``IPython.display``: no chooser, but the note still
+    reaches the (teacher's) console instead of being silently dropped."""
+    real_import = builtins.__import__
+
+    def no_widgets(name, *args, **kwargs):
+        if name in ("ipywidgets", "IPython.display"):
+            raise ImportError(f"no {name} here")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_widgets)
+    monkeypatch.delitem(sys.modules, "ipywidgets", raising=False)
+    monkeypatch.delitem(sys.modules, "IPython.display", raising=False)
+    monkeypatch.setenv(ENV_BACKEND, "cpu")
+    monkeypatch.setenv(ENV_OUTPUT, "notebook")
+    Profile = _ladder()
+
+    hardware(Profile, refresh=True)
+
+    out = capsys.readouterr().out
+    assert "Profile: SMALL" in out
+    assert "images: shown" in out
