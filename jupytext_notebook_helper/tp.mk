@@ -548,6 +548,20 @@ manifest:
 		$(if $(MANIFEST_RELATIVE_TO),--deploy-path "$(if $(strip $(SSH_HOST)),$(strip $(SSH_HOST)):)$(SSH_PATH)" \
 			--relative-to "$(MANIFEST_RELATIVE_TO)")
 
+# ---- outline ----------------------------------------------------------
+# Per-notebook table of contents (headers + print_header() calls) with each
+# [[student]]/[[assert]] marker nested under the section it appears in — a
+# quick read of what a notebook covers and what it still leaves for the
+# student. Reads the sources only, builds nothing.
+# `make outline OUTLINE_NAMES=<name>` (or several, space-separated) restricts
+# it to those notebooks; not called NAMES, which already lists every source.
+OUTLINE_NAMES ?=
+
+.PHONY: outline
+outline:
+	@$(PYTHON) python -m jupytext_notebook_helper.outline \
+		--sources $(SOURCES_DIR) $(OUTLINE_NAMES)
+
 # ---- help -----------------------------------------------------------------
 # One section per kind of work. A course adds its own section by defining and
 # EXPORTING HELP_PROJECT (printed last):
@@ -591,6 +605,10 @@ Build
                    for whatever announces them — reads the headers only, builds
                    no notebook. Needs MANIFEST=<file>; MANIFEST_BASE_URL or
                    MANIFEST_RELATIVE_TO says where they are served from.
+  outline          per-notebook table of contents (headers + print_header())
+                   with each [[student]]/[[assert]] marker nested under its
+                   section — reads the sources only, builds no notebook.
+                     OUTLINE_NAMES=<name> [<name> ...]  restrict to these
   clean            remove generated notebooks, $(TEACHER_DIR)/, zip, $(DEPDIR), $(TESTED_DIR)
 
 Check the sources (run them as scripts, pass/fail)
