@@ -96,3 +96,53 @@ def test_write_if_changed_leaves_an_identical_file_alone(tmp_path):
     assert manifest.write_if_changed(output, built) is True
     assert manifest.write_if_changed(output, built) is False
     assert json.loads(output.read_text(encoding="utf-8")) == built
+
+
+def test_build_leaves_bundles_and_solutions_out_by_default(tmp_path):
+    write(tmp_path, "tp1.py", "# %%\n")
+    built = manifest.build(
+        sources_dir=tmp_path,
+        colab_subdir="colab",
+        local_label="Notebook",
+        colab_label="Colab",
+        name_key="practical_name",
+        url="",
+    )
+    assert "bundles" not in built
+    assert [f["path"] for f in built["practicals"][0]["files"]] == [
+        "tp1.ipynb",
+        "colab/tp1.ipynb",
+    ]
+
+
+def test_build_lists_bundles_and_solution_files(tmp_path):
+    write(tmp_path, "tp1.py", "# %%\n")
+    built = manifest.build(
+        sources_dir=tmp_path,
+        colab_subdir="colab",
+        local_label="Notebook",
+        colab_label="Colab",
+        name_key="practical_name",
+        url="../lab/",
+        bundles=[manifest.parse_bundle("student=tp.zip")],
+        solution_subdir="solution",
+        solution_label="Corrigé",
+        solution_colab_label="Corrigé (Colab)",
+    )
+    assert built["bundles"] == [{"id": "student", "path": "tp.zip"}]
+    assert built["practicals"][0]["files"][2:] == [
+        {"label": "Corrigé", "path": "solution/tp1.ipynb", "solution": True},
+        {
+            "label": "Corrigé (Colab)",
+            "path": "solution/colab/tp1.ipynb",
+            "solution": True,
+        },
+    ]
+    # the keys stay in reading order: bundles before the (long) practicals list
+    assert list(built) == ["version", "baseUrl", "bundles", "practicals"]
+
+
+@pytest.mark.parametrize("value", ["student", "=tp.zip", "student="])
+def test_parse_bundle_rejects_a_malformed_value(value):
+    with pytest.raises(SystemExit):
+        manifest.parse_bundle(value)

@@ -480,3 +480,28 @@ written and handed out separately.
 The archive stays byte-stable across notebook edits: the generated student
 `pyproject.toml` is only rewritten when the set of packages actually changes, so
 the zip is rebuilt only when the environment changes, not on every build.
+
+### A second bundle with the solutions
+
+`SOLUTION_ZIP` adds an archive with the same environment and the corrigé
+(`$(SOLUTION_DIR)`, local variants) in `notebooks/`, under the same file names
+as the student ones. `make solution` and `make bundle` build it.
+
+Solutions are usually handed out after the session, so their release is a
+switch, `PUBLISH_SOLUTIONS` (default `no`). It concerns whatever of the
+solutions lives under `$(DESTDIR_TP)`, the deployed directory:
+
+```makefile
+SOLUTION_DIR      := $(DESTDIR_TP)/solution          # a direct sub-directory
+ZIP               := $(DESTDIR_TP)/tp-mycourse-uv.zip
+SOLUTION_ZIP      := $(DESTDIR_TP)/tp-mycourse-uv-solution.zip
+PUBLISH_SOLUTIONS := no                               # yes once released
+```
+
+- `make rsync` excludes them (and `--delete-excluded` removes a copy that
+  reached the server early); with `yes` it builds `solution` and deploys them,
+  whatever `RSYNC_INCLUDE` says.
+- `make manifest` lists the archives under `$(DESTDIR_TP)` in `bundles`
+  (`student`, and `solution` once released), and with `yes` adds each
+  practical's solution notebooks to its `files`, flagged `"solution": true`
+  and labelled `MANIFEST_SOLUTION_LABEL` / `MANIFEST_SOLUTION_COLAB_LABEL`.

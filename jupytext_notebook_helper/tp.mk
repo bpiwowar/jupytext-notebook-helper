@@ -30,6 +30,16 @@
 # instructor cells / [[...]] markers / tag comments):
 #   $(SOURCES_DIR)/<name>.py -> $(SOLUTION_DIR)/<name>.ipynb        solution . local
 #                            -> $(SOLUTION_DIR)/colab/<name>.ipynb  solution . Colab
+#                            +  $(SOLUTION_ZIP) = the same uv bundle, solution
+#                                       notebooks in place of the student ones
+#                                       (only when SOLUTION_ZIP is set)
+#
+# Releasing the solutions is a switch, PUBLISH_SOLUTIONS (default no): until it
+# says yes, `make rsync` keeps $(SOLUTION_ZIP) and $(SOLUTION_DIR) off the server
+# and `make manifest` does not list them. Both only concern files that live
+# under $(DESTDIR_TP) — the directory that is deployed — e.g.
+#     SOLUTION_DIR := $(DESTDIR_TP)/solution
+#     SOLUTION_ZIP := $(DESTDIR_TP)/tp-mycourse-uv-solution.zip
 #
 # Cell-tag gating (in the sources): [[student]]..[[/student]] blanks solutions;
 # tags `teacher`, `colab`, `not-colab`. The Colab `%pip install` cell is inserted
@@ -77,6 +87,11 @@ BUNDLE_NOTEBOOKS      ?= yes
 # Extra files copied at the ROOT of the bundle, e.g. a standalone pre-download
 # script: BUNDLE_EXTRA := src/mylib/resources.py
 BUNDLE_EXTRA          ?=
+# Second bundle, with the solution notebooks ($(SOLUTION_DIR), local variants).
+# Empty: not built.
+SOLUTION_ZIP          ?=
+# Whether the solutions are released (deployed by `rsync`, listed by `manifest`).
+PUBLISH_SOLUTIONS     ?= no
 # Passed to the filter for the Colab install cell; --uv-root tells it where
 # uv.lock/pyproject.toml live (relative to the build dir).
 PIP_ARGS       ?= --uv-root $(ROOT)
@@ -87,6 +102,18 @@ BUNDLE_WITH_NOTEBOOKS := yes
 else
 BUNDLE_WITH_NOTEBOOKS :=
 endif
+
+# `yes` only if PUBLISH_SOLUTIONS says so — the safe default is to keep them back.
+ifneq ($(filter $(PUBLISH_SOLUTIONS),yes Yes YES true True TRUE 1 on On ON),)
+SOLUTIONS_PUBLISHED := yes
+else
+SOLUTIONS_PUBLISHED :=
+endif
+
+# $(call under_destdir,<path>): <path> relative to $(DESTDIR_TP), or empty when
+# it lies elsewhere (and so is not deployed with the notebooks, nor served from
+# the manifest's base URL). Paths are compared as written: no `./` prefix.
+under_destdir = $(patsubst $(DESTDIR_TP)/%,%,$(filter $(DESTDIR_TP)/%,$(1)))
 
 FILTER := $(PYTHON) python -m jupytext_notebook_helper.filter --src-root $(SRC_ROOT)
 RUN    := $(PYTHON) python -m jupytext_notebook_helper.run --src-root $(SRC_ROOT)
@@ -130,8 +157,8 @@ all: student teacher
 student: $(STUDENT_LOCAL) $(STUDENT_COLAB) $(ZIP)
 notebooks: student  # backward-compatible alias
 teacher: $(TEACHER_LOCAL) $(TEACHER_COLAB)
-solution: $(SOLUTION_LOCAL) $(SOLUTION_COLAB)
-bundle: $(ZIP)
+solution: $(SOLUTION_LOCAL) $(SOLUTION_COLAB) $(SOLUTION_ZIP)
+bundle: $(ZIP) $(SOLUTION_ZIP)
 
 # The Colab rules must be declared BEFORE the matching local ones: both patterns
 # match e.g. student/colab/tp1.ipynb, and although make picks the shortest stem
@@ -185,41 +212,57 @@ $(STUDENT_ENV_DIR)/pyproject.toml: $(STUDENT_COLAB) $(ROOT)/pyproject.toml
 $(STUDENT_ENV_DIR)/uv.lock: $(STUDENT_ENV_DIR)/pyproject.toml
 	cd $(STUDENT_ENV_DIR) && uv lock
 
-# Self-contained uv bundle for local student use. The notebooks are only a
-# prerequisite when they are actually shipped (BUNDLE_NOTEBOOKS): otherwise the
-# archive is env-only and must stay stable while the notebooks are edited.
+# Self-contained uv bundle: pyproject + uv.lock + README (+ $(BUNDLE_EXTRA)),
+# and the local notebooks given — never the self-installing Colab variants,
+# which a pinned uv env makes redundant. Each archive is staged in its own
+# directory, so that `make -j` can build both at once.
+#   $(call build_bundle,<zip>,<notebooks, empty for none>)
+define build_bundle
+	@rm -rf $(BUNDLE_DIR)/$(notdir $(1))
+	@mkdir -p $(BUNDLE_DIR)/$(notdir $(1)) $(dir $(1))
+	cp $(BUNDLE_PYPROJECT) $(BUNDLE_DIR)/$(notdir $(1))/pyproject.toml
+	cp $(BUNDLE_LOCK) $(BUNDLE_DIR)/$(notdir $(1))/uv.lock
+	cp $(STUDENT_README) $(BUNDLE_DIR)/$(notdir $(1))/README.md
+	$(if $(2),@mkdir -p $(BUNDLE_DIR)/$(notdir $(1))/notebooks)
+	$(if $(2),cp $(2) $(BUNDLE_DIR)/$(notdir $(1))/notebooks/)
+	$(if $(BUNDLE_EXTRA),cp $(BUNDLE_EXTRA) $(BUNDLE_DIR)/$(notdir $(1))/)
+	rm -f $(1)
+	cd $(BUNDLE_DIR)/$(notdir $(1)) && zip -r -q $(abspath $(1)) . && cd -
+	@rm -rf $(BUNDLE_DIR)/$(notdir $(1))
+	@echo "Built $(1)$(if $(2),, (no notebooks))"
+endef
+
+BUNDLE_DEPS := $(BUNDLE_PYPROJECT) $(BUNDLE_LOCK) $(STUDENT_README) $(BUNDLE_EXTRA)
+
+# The student bundle. The notebooks are only a prerequisite when they are
+# actually shipped (BUNDLE_NOTEBOOKS): otherwise the archive is env-only and
+# must stay stable while the notebooks are edited.
 BUNDLE_NOTEBOOK_DEPS := $(if $(BUNDLE_WITH_NOTEBOOKS),$(STUDENT_LOCAL))
 
-$(ZIP): $(BUNDLE_NOTEBOOK_DEPS) $(BUNDLE_PYPROJECT) $(BUNDLE_LOCK) $(STUDENT_README) $(BUNDLE_EXTRA)
-	@rm -rf $(BUNDLE_DIR)
-	@mkdir -p $(BUNDLE_DIR) $(dir $(ZIP))
-	cp $(BUNDLE_PYPROJECT) $(BUNDLE_DIR)/pyproject.toml
-	cp $(BUNDLE_LOCK) $(BUNDLE_DIR)/uv.lock
-	cp $(STUDENT_README) $(BUNDLE_DIR)/README.md
-# $(STUDENT_LOCAL) only: the bundle ships the pinned uv env, so the
-# self-installing Colab notebooks have no place in it (unchanged behaviour).
-ifdef BUNDLE_WITH_NOTEBOOKS
-	@mkdir -p $(BUNDLE_DIR)/notebooks
-	cp $(STUDENT_LOCAL) $(BUNDLE_DIR)/notebooks/
+$(ZIP): $(BUNDLE_NOTEBOOK_DEPS) $(BUNDLE_DEPS)
+	$(call build_bundle,$@,$(BUNDLE_NOTEBOOK_DEPS))
+
+# The solution bundle: the same env, with the corrigé. BUNDLE_NOTEBOOKS does not
+# apply — an env-only archive is the student one.
+ifneq ($(strip $(SOLUTION_ZIP)),)
+$(SOLUTION_ZIP): $(SOLUTION_LOCAL) $(BUNDLE_DEPS)
+	$(call build_bundle,$@,$(SOLUTION_LOCAL))
 endif
-	$(if $(BUNDLE_EXTRA),cp $(BUNDLE_EXTRA) $(BUNDLE_DIR)/)
-	rm -f $(ZIP)
-	cd $(BUNDLE_DIR) && zip -r -q $(abspath $(ZIP)) . && cd -
-	@rm -rf $(BUNDLE_DIR)
-	@echo "Built $(ZIP)$(if $(BUNDLE_WITH_NOTEBOOKS),, (no notebooks))"
 
 # Resolution test for the bundle: unzip and verify `uv` can resolve the env from
 # the shipped pyproject + uv.lock — WITHOUT installing anything (`uv lock --check`).
 # Catches e.g. stray editable/path deps that only exist on the instructor's machine.
-check-bundle: $(ZIP)
-	@tmp=$$(mktemp -d); \
-	unzip -q $(ZIP) -d $$tmp; \
-	echo "Checking uv resolution of the bundle ..."; \
-	if (cd $$tmp && uv lock --check) >/dev/null 2>$$tmp/err; then \
-		echo "  PASS: bundle resolves (uv.lock consistent with pyproject)"; rm -rf $$tmp; \
-	else \
-		echo "  FAIL: bundle does not resolve:"; sed 's/^/    /' $$tmp/err; rm -rf $$tmp; exit 1; \
-	fi
+check-bundle: $(ZIP) $(SOLUTION_ZIP)
+	@for zip in $^; do \
+		tmp=$$(mktemp -d); \
+		unzip -q $$zip -d $$tmp; \
+		echo "Checking uv resolution of $$zip ..."; \
+		if (cd $$tmp && uv lock --check) >/dev/null 2>$$tmp/err; then \
+			echo "  PASS: bundle resolves (uv.lock consistent with pyproject)"; rm -rf $$tmp; \
+		else \
+			echo "  FAIL: bundle does not resolve:"; sed 's/^/    /' $$tmp/err; rm -rf $$tmp; exit 1; \
+		fi; \
+	done
 
 # ---- check: run each source with internal imports RESOLVED (the default) ----
 # Executes exactly the inlined subset a student notebook will contain, so a
@@ -323,7 +366,7 @@ lab-test: $(TEACHER_LOCAL)
 clean:
 	@rm -rf $(TEACHER_DIR) $(SOLUTION_DIR) $(DEPDIR) $(TESTED_DIR) $(RESOLVED_DIR) \
 		$(BUNDLE_DIR) $(STUDENT_ENV_DIR) $(STUDENT_LOCAL) $(STUDENT_COLAB) \
-		$(STUDENT_COLAB_DIR) $(LEGACY_COLAB) $(ZIP)
+		$(STUDENT_COLAB_DIR) $(LEGACY_COLAB) $(ZIP) $(SOLUTION_ZIP)
 
 # ---- run-teacher: execute the teacher notebooks, and KEEP the result -------
 #
@@ -487,15 +530,26 @@ SSH_STUDENT_DATA ?=
 SSH_STUDENT_DATA_PATH ?=
 
 RSYNC_DATA_LINK := $(if $(RSYNC_DATA),$(DESTDIR_TP)/data)
-RSYNC_ARGS := $(foreach i,$(RSYNC_INCLUDE) $(if $(RSYNC_DATA),data/ data/*),--include "$(i)")
+# The solutions under $(DESTDIR_TP), as rsync patterns anchored at its root.
+# They come first — rsync stops at the first matching rule — as includes once
+# released, as excludes before: a broad RSYNC_INCLUDE (`*.zip`, `*.ipynb`) would
+# otherwise ship them early, and --delete-excluded takes them back down from a
+# server they reached too soon. SOLUTION_DIR must then be a direct
+# sub-directory of $(DESTDIR_TP).
+SOLUTION_REL_DIR := $(call under_destdir,$(SOLUTION_DIR))
+SOLUTION_REL_ZIP := $(call under_destdir,$(SOLUTION_ZIP))
+RSYNC_SOLUTION_PATTERNS := $(if $(SOLUTION_REL_DIR),/$(SOLUTION_REL_DIR)/ /$(SOLUTION_REL_DIR)/**) \
+                           $(if $(SOLUTION_REL_ZIP),/$(SOLUTION_REL_ZIP))
+RSYNC_ARGS := $(foreach i,$(RSYNC_SOLUTION_PATTERNS),$(if $(SOLUTIONS_PUBLISHED),--include,--exclude) "$(i)") \
+              $(foreach i,$(RSYNC_INCLUDE) $(if $(RSYNC_DATA),data/ data/*),--include "$(i)")
 
 ifneq ($(strip $(SSH_HOST)),)
 .PHONY: rsync
 $(RSYNC_DATA_LINK):
 	ln -sf $(RSYNC_DATA) $@
 
-rsync: student $(RSYNC_DATA_LINK)
-	@echo "=== Synchronizing student notebooks on $(SSH_HOST) ==="
+rsync: student $(if $(SOLUTIONS_PUBLISHED),solution) $(RSYNC_DATA_LINK)
+	@echo "=== Synchronizing student notebooks$(if $(SOLUTIONS_PUBLISHED), and solutions) on $(SSH_HOST) ==="
 	@ssh $(SSH_HOST) mkdir -p $(SSH_PATH)
 	rsync --copy-unsafe-links -azv $(RSYNC_ARGS) --exclude "*" --delete-excluded \
 		$(DESTDIR_TP)/ $(SSH_HOST):$(SSH_PATH)
@@ -530,8 +584,21 @@ MANIFEST_RELATIVE_TO  ?=
 # Labels the reader shows for the two variants of each notebook.
 MANIFEST_LOCAL_LABEL  ?= Notebook
 MANIFEST_COLAB_LABEL  ?= Colab
+MANIFEST_SOLUTION_LABEL       ?= Solution
+MANIFEST_SOLUTION_COLAB_LABEL ?= Solution (Colab)
 # Header key (under jupyter.metadata) holding a practical's display name.
 MANIFEST_NAME_KEY     ?= practical_name
+
+# The archives and, once PUBLISH_SOLUTIONS says so, the solutions: whatever of
+# them lives under $(DESTDIR_TP), so is served from the same base URL. Held in
+# variables rather than written inline: a `$(if ...)` argument is cut at its
+# first comma, and a label may well have one.
+MANIFEST_BUNDLE_ARGS := \
+	$(if $(call under_destdir,$(ZIP)),--bundle "student=$(call under_destdir,$(ZIP))") \
+	$(if $(SOLUTIONS_PUBLISHED),$(if $(SOLUTION_REL_ZIP),--bundle "solution=$(SOLUTION_REL_ZIP)"))
+MANIFEST_SOLUTION_ARGS = --solution-subdir "$(SOLUTION_REL_DIR)" \
+	--solution-label "$(MANIFEST_SOLUTION_LABEL)" \
+	--solution-colab-label "$(MANIFEST_SOLUTION_COLAB_LABEL)"
 
 .PHONY: manifest
 manifest:
@@ -544,6 +611,8 @@ manifest:
 		--output $(MANIFEST) --name-key "$(MANIFEST_NAME_KEY)" \
 		--local-label "$(MANIFEST_LOCAL_LABEL)" \
 		--colab-label "$(MANIFEST_COLAB_LABEL)" \
+		$(MANIFEST_BUNDLE_ARGS) \
+		$(if $(SOLUTIONS_PUBLISHED),$(if $(SOLUTION_REL_DIR),$(MANIFEST_SOLUTION_ARGS))) \
 		$(if $(MANIFEST_BASE_URL),--base-url "$(MANIFEST_BASE_URL)") \
 		$(if $(MANIFEST_RELATIVE_TO),--deploy-path "$(if $(strip $(SSH_HOST)),$(strip $(SSH_HOST)):)$(SSH_PATH)" \
 			--relative-to "$(MANIFEST_RELATIVE_TO)")
@@ -586,6 +655,7 @@ endef
 
 define HELP_RSYNC
   rsync            deploy $(DESTDIR_TP)/ to $(SSH_HOST):$(SSH_PATH)
+                   (solutions too with PUBLISH_SOLUTIONS=yes, now: $(PUBLISH_SOLUTIONS))
 endef
 
 define HELP_RSYNC_DATA
@@ -598,13 +668,15 @@ Build
   student          student notebooks (local + Colab) + uv zip
   teacher          teacher notebooks (local + Colab, with solutions)
   solution         student-facing solution / corrigé (local + Colab, with
-                   solutions, no instructor cells/markers/tag comments)
-  bundle           the uv-ready student zip only$(if $(BUNDLE_WITH_NOTEBOOKS),, (env only, no notebooks))
+                   solutions, no instructor cells/markers/tag comments)$(if $(SOLUTION_ZIP),
+                   + $(SOLUTION_ZIP))
+  bundle           the uv-ready zip(s) only$(if $(BUNDLE_WITH_NOTEBOOKS),, (student: env only, no notebooks))
   all              student + teacher
   manifest         JSON description of the practicals (ids, names, files, URL)
                    for whatever announces them — reads the headers only, builds
                    no notebook. Needs MANIFEST=<file>; MANIFEST_BASE_URL or
                    MANIFEST_RELATIVE_TO says where they are served from.
+                   Solutions listed only with PUBLISH_SOLUTIONS=yes (now: $(PUBLISH_SOLUTIONS)).
   outline          per-notebook table of contents (headers + print_header())
                    with each [[student]]/[[assert]] marker nested under its
                    section — reads the sources only, builds no notebook.

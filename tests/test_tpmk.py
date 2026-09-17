@@ -64,7 +64,7 @@ MAKEFILE = textwrap.dedent(
     """
     DESTDIR_TP := student
     ROOT       := .
-    ZIP        := dist/tp.zip
+    ZIP        ?= dist/tp.zip
     PYTHON     :=
     include {tp_mk}
     """
@@ -82,7 +82,7 @@ def _age(path, seconds=60):
     os.utime(path, (stamp, stamp))
 
 
-def _course(tmp_path, names=("tp1", "tp2"), makefile_extra=""):
+def _course(tmp_path, names=("tp1", "tp2"), makefile_extra="", makefile_head=""):
     """Create a minimal course directory and return its path."""
     (tmp_path / "sources").mkdir()
     for name in names:
@@ -96,7 +96,10 @@ def _course(tmp_path, names=("tp1", "tp2"), makefile_extra=""):
         '[project]\nname = "course"\nversion = "0"\ndependencies = ["numpy"]\n'
     )
     (tmp_path / "uv.lock").write_text(UV_LOCK)
-    (tmp_path / "Makefile").write_text(MAKEFILE.format(tp_mk=TP_MK) + makefile_extra)
+    # makefile_head goes before the include, as a course's settings do.
+    (tmp_path / "Makefile").write_text(
+        makefile_head + MAKEFILE.format(tp_mk=TP_MK) + makefile_extra
+    )
     return tmp_path
 
 
@@ -284,3 +287,86 @@ def test_help_documents_the_new_layout(tmp_path):
     out = _make(course, "help").stdout
     assert "student/colab/<name>.ipynb" in out
     assert "teacher/colab/<name>.ipynb" in out
+
+
+# --------------------------------------------------------------------------
+# solution bundle, release switch
+# --------------------------------------------------------------------------
+
+# Solutions under the deployed directory, and a bundle env taken straight from
+# the course root so that no `uv lock` runs.
+SOLUTION_MAKEFILE = textwrap.dedent(
+    """
+    SOLUTION_DIR     := student/solution
+    ZIP              := student/tp.zip
+    SOLUTION_ZIP     := student/tp-solution.zip
+    BUNDLE_PYPROJECT := pyproject.toml
+    BUNDLE_LOCK      := uv.lock
+    """
+)
+
+
+@pytest.mark.skipif(shutil.which("zip") is None, reason="zip is not available")
+def test_solution_bundle_ships_the_solution_notebooks(tmp_path):
+    import zipfile
+
+    course = _course(tmp_path, names=("tp1",), makefile_head=SOLUTION_MAKEFILE)
+    _make(course, "bundle")
+
+    with zipfile.ZipFile(course / "student" / "tp.zip") as student:
+        student_nb = student.read("notebooks/tp1.ipynb").decode()
+    with zipfile.ZipFile(course / "student" / "tp-solution.zip") as solution:
+        names = set(solution.namelist())
+        solution_nb = solution.read("notebooks/tp1.ipynb").decode()
+
+    assert {"pyproject.toml", "uv.lock", "README.md"} <= names
+    assert "np.int64(42)" not in student_nb
+    assert "np.int64(42)" in solution_nb
+    assert "teacher-only" not in solution_nb
+
+
+def _rsync_line(course, *overrides):
+    out = _make(course, "-n", "rsync", "SSH_HOST=h", "SSH_PATH=/p", *overrides)
+    (line,) = [l for l in out.stdout.splitlines() if l.startswith("rsync ")]
+    return line
+
+
+def test_rsync_keeps_the_solutions_back_until_published(tmp_path):
+    course = _course(tmp_path, names=("tp1",), makefile_head=SOLUTION_MAKEFILE)
+
+    held = _rsync_line(course)
+    assert '--exclude "/solution/"' in held
+    assert '--exclude "/tp-solution.zip"' in held
+    # before any include, since rsync stops at the first match
+    assert held.index("--exclude") < held.index("--include")
+
+    released = _rsync_line(course, "PUBLISH_SOLUTIONS=yes")
+    assert '--include "/solution/**"' in released
+    assert '--include "/tp-solution.zip"' in released
+    assert '--exclude "/solution/"' not in released
+
+
+def test_manifest_lists_the_solutions_only_once_published(tmp_path):
+    import json
+
+    course = _course(tmp_path, names=("tp1",), makefile_head=SOLUTION_MAKEFILE)
+
+    _make(course, "manifest", "MANIFEST=held.json")
+    held = json.loads((course / "held.json").read_text())
+    assert held["bundles"] == [{"id": "student", "path": "tp.zip"}]
+    assert not any(f.get("solution") for f in held["practicals"][0]["files"])
+
+    _make(
+        course,
+        "manifest",
+        "MANIFEST=released.json",
+        "PUBLISH_SOLUTIONS=yes",
+        "MANIFEST_SOLUTION_LABEL=Corrigé, local",
+    )
+    released = json.loads((course / "released.json").read_text())
+    assert released["bundles"][1] == {"id": "solution", "path": "tp-solution.zip"}
+    assert {
+        "label": "Corrigé, local",
+        "path": "solution/tp1.ipynb",
+        "solution": True,
+    } in released["practicals"][0]["files"]

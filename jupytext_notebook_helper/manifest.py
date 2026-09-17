@@ -11,12 +11,18 @@ So this module writes them out::
     {
       "version": 1,
       "baseUrl": "../lab/",
+      "bundles": [
+        { "id": "student",  "path": "tp-uv.zip" },
+        { "id": "solution", "path": "tp-uv-solution.zip" }
+      ],
       "practicals": [
         { "id": "lora-sft",
           "name": "Affinage LoRA d'un décodeur",
           "files": [
             { "label": "Notebook", "path": "lora-sft.ipynb" },
-            { "label": "Colab",    "path": "colab/lora-sft.ipynb" }
+            { "label": "Colab",    "path": "colab/lora-sft.ipynb" },
+            { "label": "Corrigé",  "path": "solution/lora-sft.ipynb",
+              "solution": true }
           ] }
       ]
     }
@@ -26,6 +32,12 @@ notebooks as seen from the consumer. It is either given outright
 (``--base-url``) or worked out from the two deployment paths
 (``--deploy-path``, ``--relative-to``), so that neither side carries a URL it
 cannot check.
+
+``bundles`` lists the course-wide archives (``--bundle id=path``), with paths
+relative to ``baseUrl`` too; the reader supplies the wording, keyed by ``id``.
+The solution notebooks (``--solution-subdir``) are listed only when given —
+that is how a course keeps its corrigé unannounced until it is released — and
+each such file carries ``"solution": true``.
 
 The display name is the ``practical_name`` key of the source's percent-format
 header::
@@ -136,6 +148,14 @@ def base_url(
     return "" if relative == "." else relative.rstrip("/") + "/"
 
 
+def parse_bundle(value: str) -> dict[str, str]:
+    """``id=path`` (as given on the command line) as a manifest entry."""
+    bundle_id, sep, path = value.partition("=")
+    if not sep or not bundle_id.strip() or not path.strip():
+        raise SystemExit(f"manifest: --bundle expects id=path, got {value!r}")
+    return {"id": bundle_id.strip(), "path": path.strip()}
+
+
 def build(
     *,
     sources_dir: Path,
@@ -144,17 +164,41 @@ def build(
     colab_label: str,
     name_key: str,
     url: str,
+    bundles: list[dict[str, str]] | None = None,
+    solution_subdir: str | None = None,
+    solution_label: str = "Solution",
+    solution_colab_label: str = "Solution (Colab)",
 ) -> dict[str, Any]:
     practicals = []
     for source in sorted(sources_dir.glob("*.py")):
         stem = source.stem
-        files = [{"label": local_label, "path": f"{stem}.ipynb"}]
+        files: list[dict[str, Any]] = [{"label": local_label, "path": f"{stem}.ipynb"}]
         if colab_subdir:
             files.append({"label": colab_label, "path": f"{colab_subdir}/{stem}.ipynb"})
+        if solution_subdir:
+            files.append(
+                {
+                    "label": solution_label,
+                    "path": f"{solution_subdir}/{stem}.ipynb",
+                    "solution": True,
+                }
+            )
+            if colab_subdir:
+                files.append(
+                    {
+                        "label": solution_colab_label,
+                        "path": f"{solution_subdir}/{colab_subdir}/{stem}.ipynb",
+                        "solution": True,
+                    }
+                )
         practicals.append(
             {"id": stem, "name": display_name(source, name_key), "files": files}
         )
-    return {"version": 1, "baseUrl": url, "practicals": practicals}
+    manifest: dict[str, Any] = {"version": 1, "baseUrl": url}
+    if bundles:
+        manifest["bundles"] = bundles
+    manifest["practicals"] = practicals
+    return manifest
 
 
 def write_if_changed(output: Path, manifest: dict[str, Any]) -> bool:
@@ -186,6 +230,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--local-label", default="Notebook")
     parser.add_argument("--colab-label", default="Colab")
     parser.add_argument(
+        "--bundle",
+        action="append",
+        default=[],
+        metavar="ID=PATH",
+        help="a course-wide archive, relative to the base URL (repeatable)",
+    )
+    parser.add_argument(
+        "--solution-subdir",
+        help="sub-directory of the solution notebooks, relative to the base URL; "
+        "unset leaves them out",
+    )
+    parser.add_argument("--solution-label", default="Solution")
+    parser.add_argument("--solution-colab-label", default="Solution (Colab)")
+    parser.add_argument(
         "--name-key",
         default="practical_name",
         help="header key holding the display name (under jupyter.metadata)",
@@ -210,6 +268,10 @@ def main(argv: list[str] | None = None) -> int:
         local_label=args.local_label,
         colab_label=args.colab_label,
         name_key=args.name_key,
+        bundles=[parse_bundle(value) for value in args.bundle],
+        solution_subdir=args.solution_subdir.strip("/") if args.solution_subdir else None,
+        solution_label=args.solution_label,
+        solution_colab_label=args.solution_colab_label,
         url=base_url(
             given=args.base_url,
             deploy_path=args.deploy_path,
