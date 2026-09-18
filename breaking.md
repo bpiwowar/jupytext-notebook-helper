@@ -48,3 +48,35 @@ moving from one to the other.
   - Drop `from jupytext_notebook_helper import *` once nothing it exports
     (`test_mode`, `skip_plots`, …) is used anymore; import `hardware`,
     `print_header`, etc. by name instead.
+
+## Local notebooks at the root of each output directory — staged for v2.0.0
+
+- **Changes:** each output directory gets one sub-directory per variant, so
+  local notebooks no longer share a directory with the Colab sub-directory,
+  the bundles and the corrigé:
+
+  ```
+  now                                  v2.0.0
+  $(DESTDIR_TP)/<name>.ipynb           $(DESTDIR_TP)/local/<name>.ipynb
+  $(DESTDIR_TP)/colab/<name>.ipynb     $(DESTDIR_TP)/colab/<name>.ipynb
+  $(TEACHER_DIR)/<name>.ipynb          $(TEACHER_DIR)/local/<name>.ipynb
+  $(TEACHER_DIR)/colab/<name>.ipynb    $(TEACHER_DIR)/colab/<name>.ipynb
+  $(SOLUTION_DIR)/<name>.ipynb         $(SOLUTION_DIR)/local/<name>.ipynb
+  $(SOLUTION_DIR)/colab/<name>.ipynb   $(SOLUTION_DIR)/colab/<name>.ipynb
+  ```
+
+  The name of the new sub-directory is a variable (`LOCAL_SUBDIR`, default
+  `local`), like `COLAB_SUBDIR`; it must not be empty either.
+- **Why:** with local notebooks at the root, a listing of `$(DESTDIR_TP)`
+  mixes notebooks, variant directories, zips and data; every variant being a
+  directory makes the layout uniform and lets rsync and the manifest treat the
+  variants the same way.
+- **Migration recipe:**
+  - Links to a local notebook (course pages, README, slides) gain one path
+    segment: `<name>.ipynb` → `local/<name>.ipynb`. Links generated from the
+    manifest need no change: `make manifest` writes the new paths.
+  - A course-specific `RSYNC_INCLUDE` has to list `local/` alongside `colab/`
+    (rsync does not descend into a directory it was not told to include).
+  - `make clean` once, then rebuild: stale notebooks at the old paths are not
+    removed by the new rules, and `rsync --delete-excluded` takes them down
+    from the server.
