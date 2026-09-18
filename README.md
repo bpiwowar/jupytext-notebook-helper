@@ -27,6 +27,8 @@ fidelity) so a broken example fails on your machine, not the student's.
 
 ## The idea in one picture
 
+(Step by step, with the target for each: [docs/pipeline.md](docs/pipeline.md).)
+
 ```
                          ┌─ teacher/tp1.ipynb        (solutions kept)
    tp1.py   ──filter──▶  ├─ student/tp1.ipynb        (solutions blanked)
