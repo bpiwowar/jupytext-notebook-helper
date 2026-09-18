@@ -3,8 +3,8 @@
 # The pipeline, end to end
 
 What happens to a notebook from source to course page, step by step. Each step
-has its own section in the [README](../README.md); this page puts them in order
-and names the target for each.
+has its own page (see the [README](../README.md#documentation)); this one puts
+them in order and names the target for each.
 
 ```
  sources/tp1.py                          one percent-format file per TP
@@ -41,7 +41,7 @@ name comes from the header metadata (key `MANIFEST_NAME_KEY`, default
 In the cells, `[[student]] … [[/student]]` marks what students must write,
 `[[remove]] … [[/remove]]` marks what only the instructor sees, and cell tags
 (`teacher`, `colab`, `not-colab`) gate whole cells. See
-[What you write](../README.md#what-you-write).
+[Writing a source](authoring.md#markers).
 
 ## 2. Build
 
