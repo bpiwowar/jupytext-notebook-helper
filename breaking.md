@@ -49,7 +49,7 @@ moving from one to the other.
     (`test_mode`, `skip_plots`, …) is used anymore; import `hardware`,
     `print_header`, etc. by name instead.
 
-## Local notebooks at the root of each output directory — staged for v2.0.0
+## Local notebooks at the root of each output directory — shipped in v2.0.0
 
 - **Changes:** each output directory gets one sub-directory per variant, so
   local notebooks no longer share a directory with the Colab sub-directory,
@@ -77,6 +77,6 @@ moving from one to the other.
     manifest need no change: `make manifest` writes the new paths.
   - A course-specific `RSYNC_INCLUDE` has to list `local/` alongside `colab/`
     (rsync does not descend into a directory it was not told to include).
-  - `make clean` once, then rebuild: stale notebooks at the old paths are not
-    removed by the new rules, and `rsync --delete-excluded` takes them down
-    from the server.
+  - `make clean` once, then rebuild: `clean` removes the notebooks left at
+    the old paths, and `rsync --delete-excluded` takes them down from the
+    server.
