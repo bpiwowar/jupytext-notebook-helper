@@ -13,12 +13,12 @@
 #     pip-exclude = ["mycourse-internal"]     # never pip-installed by students
 #     student-base-deps = ["cached-hub>=0.3.0"]
 #
-# Generates four variants per source plus a uv bundle. The Colab variants live
-# in a `$(COLAB_SUBDIR)/` sub-directory of each output directory (they used to be
-# named `<name>.colab.ipynb` next to the local ones — see `clean` below):
-#   $(SOURCES_DIR)/<name>.py -> $(DESTDIR_TP)/<name>.ipynb          student . local
+# Generates four variants per source plus a uv bundle. Every output directory
+# has one sub-directory per variant, `$(LOCAL_SUBDIR)/` and `$(COLAB_SUBDIR)/`
+# (before 2.0 the local notebooks sat at its root — see `clean` below):
+#   $(SOURCES_DIR)/<name>.py -> $(DESTDIR_TP)/local/<name>.ipynb    student . local
 #                            -> $(DESTDIR_TP)/colab/<name>.ipynb    student . Colab (self-installs)
-#                            -> $(TEACHER_DIR)/<name>.ipynb         teacher . local (solutions)
+#                            -> $(TEACHER_DIR)/local/<name>.ipynb   teacher . local (solutions)
 #                            -> $(TEACHER_DIR)/colab/<name>.ipynb   teacher . Colab
 #                            +  $(ZIP) = pyproject + uv.lock + local notebooks + README
 #                                       (BUNDLE_NOTEBOOKS=no drops the notebooks,
@@ -28,7 +28,7 @@
 #
 # Optional `make solution` adds a student-facing corrigé (solutions kept, but no
 # instructor cells / [[...]] markers / tag comments):
-#   $(SOURCES_DIR)/<name>.py -> $(SOLUTION_DIR)/<name>.ipynb        solution . local
+#   $(SOURCES_DIR)/<name>.py -> $(SOLUTION_DIR)/local/<name>.ipynb  solution . local
 #                            -> $(SOLUTION_DIR)/colab/<name>.ipynb  solution . Colab
 #                            +  $(SOLUTION_ZIP) = the same uv bundle, solution
 #                                       notebooks in place of the student ones
@@ -51,8 +51,10 @@ SOURCES_DIR    ?= sources
 DESTDIR_TP     ?= ../static/tp
 TEACHER_DIR    ?= teacher
 SOLUTION_DIR   ?= solution
-# Sub-directory (of each of the three output directories above) holding the
-# Colab variants, e.g. student/colab/<name>.ipynb. Must not be empty.
+# Sub-directories (of each of the three output directories above) holding the
+# local and the Colab variants, e.g. student/local/<name>.ipynb and
+# student/colab/<name>.ipynb. Neither may be empty, and they must differ.
+LOCAL_SUBDIR   ?= local
 COLAB_SUBDIR   ?= colab
 ROOT           ?= ..
 PYTHON         ?= uv run
@@ -115,30 +117,44 @@ endif
 # the manifest's base URL). Paths are compared as written: no `./` prefix.
 under_destdir = $(patsubst $(DESTDIR_TP)/%,%,$(filter $(DESTDIR_TP)/%,$(1)))
 
-FILTER := $(PYTHON) python -m jupytext_notebook_helper.filter --src-root $(SRC_ROOT)
 RUN    := $(PYTHON) python -m jupytext_notebook_helper.run --src-root $(SRC_ROOT)
 
 ifeq ($(strip $(COLAB_SUBDIR)),)
 $(error COLAB_SUBDIR must not be empty: the Colab notebooks need their own sub-directory)
 endif
+ifeq ($(strip $(LOCAL_SUBDIR)),)
+$(error LOCAL_SUBDIR must not be empty: the local notebooks need their own sub-directory)
+endif
+ifeq ($(strip $(LOCAL_SUBDIR)),$(strip $(COLAB_SUBDIR)))
+$(error LOCAL_SUBDIR and COLAB_SUBDIR must differ)
+endif
 
+STUDENT_LOCAL_DIR  := $(DESTDIR_TP)/$(LOCAL_SUBDIR)
+TEACHER_LOCAL_DIR  := $(TEACHER_DIR)/$(LOCAL_SUBDIR)
+SOLUTION_LOCAL_DIR := $(SOLUTION_DIR)/$(LOCAL_SUBDIR)
 STUDENT_COLAB_DIR  := $(DESTDIR_TP)/$(COLAB_SUBDIR)
 TEACHER_COLAB_DIR  := $(TEACHER_DIR)/$(COLAB_SUBDIR)
 SOLUTION_COLAB_DIR := $(SOLUTION_DIR)/$(COLAB_SUBDIR)
 
+# The filter writes $(DEPDIR)/<name>.d, making every variant depend on the
+# `src/` modules it inlines; it is told which paths those variants have.
+FILTER := $(PYTHON) python -m jupytext_notebook_helper.filter --src-root $(SRC_ROOT) \
+	$(foreach d,$(STUDENT_LOCAL_DIR) $(STUDENT_COLAB_DIR) $(TEACHER_LOCAL_DIR) \
+		$(TEACHER_COLAB_DIR) $(SOLUTION_LOCAL_DIR) $(SOLUTION_COLAB_DIR),--dep-target "$(d)")
+
 PY_NOTEBOOKS  := $(wildcard $(SOURCES_DIR)/*.py)
 NAMES         := $(patsubst $(SOURCES_DIR)/%.py,%,$(PY_NOTEBOOKS))
-STUDENT_LOCAL := $(NAMES:%=$(DESTDIR_TP)/%.ipynb)
+STUDENT_LOCAL := $(NAMES:%=$(STUDENT_LOCAL_DIR)/%.ipynb)
 STUDENT_COLAB := $(NAMES:%=$(STUDENT_COLAB_DIR)/%.ipynb)
-TEACHER_LOCAL := $(NAMES:%=$(TEACHER_DIR)/%.ipynb)
+TEACHER_LOCAL := $(NAMES:%=$(TEACHER_LOCAL_DIR)/%.ipynb)
 TEACHER_COLAB := $(NAMES:%=$(TEACHER_COLAB_DIR)/%.ipynb)
-SOLUTION_LOCAL := $(NAMES:%=$(SOLUTION_DIR)/%.ipynb)
+SOLUTION_LOCAL := $(NAMES:%=$(SOLUTION_LOCAL_DIR)/%.ipynb)
 SOLUTION_COLAB := $(NAMES:%=$(SOLUTION_COLAB_DIR)/%.ipynb)
-# Pre-0.8 output names, removed by `clean` so an upgraded checkout does not keep
-# serving stale <name>.colab.ipynb next to the new colab/<name>.ipynb.
-LEGACY_COLAB  := $(NAMES:%=$(DESTDIR_TP)/%.colab.ipynb) \
-                 $(NAMES:%=$(TEACHER_DIR)/%.colab.ipynb) \
-                 $(NAMES:%=$(SOLUTION_DIR)/%.colab.ipynb)
+# Older output names, removed by `clean` so an upgraded checkout does not keep
+# serving stale notebooks: <name>.colab.ipynb (before 0.8) and <name>.ipynb at
+# the root of an output directory (before 2.0).
+LEGACY_OUTPUTS := $(foreach d,$(DESTDIR_TP) $(TEACHER_DIR) $(SOLUTION_DIR), \
+                    $(NAMES:%=$(d)/%.colab.ipynb) $(NAMES:%=$(d)/%.ipynb))
 DEPFILES      := $(NAMES:%=$(DEPDIR)/%.d)
 TESTED        := $(NAMES:%=$(TESTED_DIR)/%.tested)
 RESOLVED      := $(NAMES:%=$(RESOLVED_DIR)/%.resolved)
@@ -160,12 +176,7 @@ teacher: $(TEACHER_LOCAL) $(TEACHER_COLAB)
 solution: $(SOLUTION_LOCAL) $(SOLUTION_COLAB) $(SOLUTION_ZIP)
 bundle: $(ZIP) $(SOLUTION_ZIP)
 
-# The Colab rules must be declared BEFORE the matching local ones: both patterns
-# match e.g. student/colab/tp1.ipynb, and although make picks the shortest stem
-# (`tp1` here, against `colab/tp1` for the local pattern) rather than the first
-# rule, keeping them in this order makes the intent readable. The local rules
-# stay safe either way: their prerequisite would be $(SOURCES_DIR)/colab/tp1.py,
-# which does not exist, so they cannot apply to a file under $(COLAB_SUBDIR)/.
+# Each variant has its own directory, so the patterns below never compete.
 # Every recipe creates its own directory with `mkdir -p $(@D)`.
 
 # student . Colab — auto `%pip install` cell, no solutions, drop not-colab.
@@ -174,7 +185,7 @@ $(STUDENT_COLAB_DIR)/%.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
 	$(FILTER) --depdir $(DEPDIR) --colab --exclude teacher,not-colab $(PIP_ARGS) $< > $@ || rm -f "$@"
 
 # student . local — no install cell, no solutions.
-$(DESTDIR_TP)/%.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
+$(STUDENT_LOCAL_DIR)/%.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
 	@mkdir -p $(@D)
 	$(FILTER) --depdir $(DEPDIR) --exclude teacher,colab,pip $< > $@ || rm -f "$@"
 
@@ -184,7 +195,7 @@ $(TEACHER_COLAB_DIR)/%.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
 	$(FILTER) --depdir $(DEPDIR) --colab --teacher --exclude not-colab $(PIP_ARGS) $< > $@ || rm -f "$@"
 
 # teacher . local — solutions, instructor helper cell kept.
-$(TEACHER_DIR)/%.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
+$(TEACHER_LOCAL_DIR)/%.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
 	@mkdir -p $(@D)
 	$(FILTER) --depdir $(DEPDIR) --teacher --exclude colab,pip $< > $@ || rm -f "$@"
 
@@ -195,7 +206,7 @@ $(SOLUTION_COLAB_DIR)/%.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
 	$(FILTER) --depdir $(DEPDIR) --colab --solution --exclude teacher,not-colab $(PIP_ARGS) $< > $@ || rm -f "$@"
 
 # solution (corrigé) . local — solutions kept, no install cell, no instructor content.
-$(SOLUTION_DIR)/%.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
+$(SOLUTION_LOCAL_DIR)/%.ipynb: $(SOURCES_DIR)/%.py | $(DEPDIR)
 	@mkdir -p $(@D)
 	$(FILTER) --depdir $(DEPDIR) --solution --exclude teacher,colab,pip $< > $@ || rm -f "$@"
 
@@ -338,7 +349,7 @@ show-raw:
 	done
 
 # ---- lab: JupyterLab on the built teacher notebooks ----
-# $(LAB_DIR) defaults to $(TEACHER_DIR): only the teacher variant keeps the
+# $(LAB_DIR) defaults to $(TEACHER_LOCAL_DIR): only the teacher variant keeps the
 # `from jupytext_notebook_helper import *` cell and the [[remove]] blocks.
 #
 # `lab-test` exports NOTEBOOK_PROFILE for the whole server, and the ladder reads
@@ -349,7 +360,7 @@ show-raw:
 #
 # Note that editing a notebook in Lab does NOT write back to $(SOURCES_DIR):
 # $(LAB_DIR) holds build outputs, overwritten as soon as the source is newer.
-LAB_DIR       ?= $(TEACHER_DIR)
+LAB_DIR       ?= $(TEACHER_LOCAL_DIR)
 LAB           ?= $(PYTHON) jupyter lab
 LAB_PROFILE   ?= small
 
@@ -359,14 +370,15 @@ lab: $(TEACHER_LOCAL)
 lab-test: $(TEACHER_LOCAL)
 	NOTEBOOK_PROFILE=$(LAB_PROFILE) $(NOTEBOOK_ENV) $(LAB) $(LAB_DIR)
 
-# $(LEGACY_COLAB): pre-0.8 <name>.colab.ipynb outputs. $(TEACHER_DIR) and
-# $(SOLUTION_DIR) go away wholesale, but $(DESTDIR_TP) is only cleaned file by
-# file (it is often a shared static/ directory), so the old student Colab
-# notebooks would otherwise survive the upgrade and keep being deployed.
+# $(LEGACY_OUTPUTS): notebooks at their pre-2.0 (or pre-0.8) paths.
+# $(TEACHER_DIR) and $(SOLUTION_DIR) go away wholesale, but $(DESTDIR_TP) is
+# only cleaned file by file (it is often a shared static/ directory), so the
+# old student notebooks would otherwise survive the upgrade and keep being
+# deployed.
 clean:
 	@rm -rf $(TEACHER_DIR) $(SOLUTION_DIR) $(DEPDIR) $(TESTED_DIR) $(RESOLVED_DIR) \
 		$(BUNDLE_DIR) $(STUDENT_ENV_DIR) $(STUDENT_LOCAL) $(STUDENT_COLAB) \
-		$(STUDENT_COLAB_DIR) $(LEGACY_COLAB) $(ZIP) $(SOLUTION_ZIP)
+		$(STUDENT_LOCAL_DIR) $(STUDENT_COLAB_DIR) $(LEGACY_OUTPUTS) $(ZIP) $(SOLUTION_ZIP)
 
 # ---- run-teacher: execute the teacher notebooks, and KEEP the result -------
 #
@@ -383,7 +395,7 @@ clean:
 #   make check-teacher                      the same runner as a smoke test
 #
 # What is NOT run again. Each notebook has a stamp under $(RUN_DIR)/.done/,
-# keyed by profile; the stamp depends on $(TEACHER_DIR)/<name>.ipynb, which
+# keyed by profile; the stamp depends on $(TEACHER_LOCAL_DIR)/<name>.ipynb, which
 # itself depends on the source. So a notebook is re-run when its source
 # changed, when the profile changed, or when the last run failed (a failure
 # leaves no stamp) — and skipped otherwise. `make run-again` forgets every
@@ -422,7 +434,7 @@ run-teacher\:%:
 # error is found afterwards in the saved notebook, and in the missing stamp.
 # --timeout=-1 for the same reason: a legitimately slow cell is not a hung one,
 # and RUN_TIMEOUT is what bounds a notebook as a whole.
-$(RUN_STAMP_DIR)/%.$(RUN_PROFILE_LABEL): $(TEACHER_DIR)/%.ipynb
+$(RUN_STAMP_DIR)/%.$(RUN_PROFILE_LABEL): $(TEACHER_LOCAL_DIR)/%.ipynb
 	@mkdir -p $(RUN_STAMP_DIR)
 	@rm -f $(RUN_DIR)/$*.time
 	@cp $< $(RUN_DIR)/$*.ipynb
@@ -518,9 +530,9 @@ endif
 SSH_HOST ?=
 SSH_PATH ?=
 #: What of $(DESTDIR_TP) reaches the server. rsync never descends into a
-#: directory it was not told to include, so "colab/" must come before
-#: "*.ipynb" — without it the Colab notebooks silently stop being deployed.
-RSYNC_INCLUDE ?= colab/ *.ipynb *.zip
+#: directory it was not told to include, so the two variant directories must
+#: be listed — without them the notebooks silently stop being deployed.
+RSYNC_INCLUDE ?= $(LOCAL_SUBDIR)/ $(COLAB_SUBDIR)/ *.ipynb *.zip
 #: Relative to $(DESTDIR_TP): symlinked there as `data` and deployed with the
 #: notebooks. Empty means the course ships no data directory.
 RSYNC_DATA ?=
@@ -607,7 +619,8 @@ manifest:
 		echo "       make manifest MANIFEST=../slides/practicals.json"; \
 		exit 1; }
 	@$(PYTHON) python -m jupytext_notebook_helper.manifest \
-		--sources $(SOURCES_DIR) --colab-subdir "$(COLAB_SUBDIR)" \
+		--sources $(SOURCES_DIR) --local-subdir "$(LOCAL_SUBDIR)" \
+		--colab-subdir "$(COLAB_SUBDIR)" \
 		--output $(MANIFEST) --name-key "$(MANIFEST_NAME_KEY)" \
 		--local-label "$(MANIFEST_LOCAL_LABEL)" \
 		--colab-label "$(MANIFEST_COLAB_LABEL)" \
@@ -727,9 +740,9 @@ export HELP_TEXT
 
 define HELP_FOOTER
 
-Layout: <name>.ipynb next to the sources' output dir, Colab variants under
-        $(COLAB_SUBDIR)/ — $(DESTDIR_TP)/$(COLAB_SUBDIR)/<name>.ipynb,
-        $(TEACHER_DIR)/$(COLAB_SUBDIR)/<name>.ipynb, $(SOLUTION_DIR)/$(COLAB_SUBDIR)/<name>.ipynb
+Layout: $(LOCAL_SUBDIR)/<name>.ipynb and $(COLAB_SUBDIR)/<name>.ipynb in each output
+        directory — student: $(DESTDIR_TP), teacher: $(TEACHER_DIR),
+        solution: $(SOLUTION_DIR)
 
 Sources: $(NAMES)
 endef

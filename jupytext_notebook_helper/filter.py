@@ -156,6 +156,14 @@ parser.add_argument(
 )
 parser.add_argument("--depdir", type=Path, default=None)
 parser.add_argument(
+    "--dep-target",
+    action="append",
+    default=None,
+    metavar="DIR",
+    help="output directory whose <name>.ipynb depends on what the source inlines "
+    "(repeatable; tp.mk passes each of its variant directories)",
+)
+parser.add_argument(
     "--pip-exclude",
     type=csv_list,
     help="packages to never emit in the install cell (csv)",
@@ -859,18 +867,15 @@ if args.depdir is not None:
 
     target = source.replace(".py", ".d")
     notebook = source.replace(".py", ".ipynb")
-    # Every variant tp.mk knows how to build. These used to be the pre-0.8
-    # `<name>.student.ipynb` spellings, which no rule produced any more, so the
-    # prerequisites attached to nothing and an edit to an inlined `src/` module
-    # never rebuilt a notebook.
-    targets = [
-        target,
-        f"student/{notebook}",
-        f"student/colab/{notebook}",
-        f"teacher/{notebook}",
-        f"teacher/colab/{notebook}",
-        f"solution/{notebook}",
-        f"solution/colab/{notebook}",
+    # Every variant the build produces: tp.mk names its directories, since the
+    # paths are the course's to choose. Without them, the default layout. A
+    # target that no rule builds attaches the prerequisites to nothing, and an
+    # edit to an inlined `src/` module then never rebuilds a notebook.
+    dep_dirs = args.dep_target or [
+        f"{variant}/{kind}"
+        for variant in ("student", "teacher", "solution")
+        for kind in ("local", "colab")
     ]
+    targets = [target] + [f"{d.rstrip('/')}/{notebook}" for d in dep_dirs]
     with (args.depdir / target).open("wt") as fp:
         fp.write(f"""{" ".join(targets)}: {" ".join(deps)}\n""")

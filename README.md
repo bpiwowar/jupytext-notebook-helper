@@ -29,18 +29,19 @@ fidelity) so a broken example fails on your machine, not the student's.
 ## The idea in one picture
 
 ```
-                         ┌─ teacher/tp1.ipynb        (solutions kept)
-   tp1.py   ──filter──▶  ├─ student/tp1.ipynb        (solutions blanked)
- (py:percent)            ├─ student/colab/tp1.ipynb  (+ auto %pip install cell)
-                         └─ solution/tp1.ipynb       (optional corrigé)
+                         ┌─ student/  local/tp1.ipynb   (solutions blanked)
+                         │            colab/tp1.ipynb   (+ auto %pip install cell)
+   tp1.py   ──filter──▶  ├─ teacher/  local/tp1.ipynb   (solutions kept)
+ (py:percent)            │            colab/tp1.ipynb
+                         └─ solution/ local/tp1.ipynb   (optional corrigé)
+                                      colab/tp1.ipynb
         │
         └─ + uv bundle (pyproject + uv.lock + notebooks) for a reproducible
              local install
 ```
 
-Each output directory keeps its Colab variants in a `colab/` sub-directory
-(`teacher/colab/tp1.ipynb`, `solution/colab/tp1.ipynb`, …) — same file name as
-the local notebook, so a link only changes by one path segment.
+Every output directory has the same two sub-directories, `local/` and `colab/`,
+with the same file names, so a link only changes by one path segment.
 
 You author in `tp1.py`; students never see the machinery.
 

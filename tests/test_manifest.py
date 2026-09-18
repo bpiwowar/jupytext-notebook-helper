@@ -77,6 +77,7 @@ def test_build_lists_every_source_sorted(tmp_path):
     write(tmp_path, "dpo.py", "# %%\n")
     built = manifest.build(
         sources_dir=tmp_path,
+        local_subdir="local",
         colab_subdir="colab",
         local_label="Notebook",
         colab_label="Colab",
@@ -85,7 +86,7 @@ def test_build_lists_every_source_sorted(tmp_path):
     )
     assert [p["id"] for p in built["practicals"]] == ["dpo", "lora-sft"]
     assert built["practicals"][1]["files"] == [
-        {"label": "Notebook", "path": "lora-sft.ipynb"},
+        {"label": "Notebook", "path": "local/lora-sft.ipynb"},
         {"label": "Colab", "path": "colab/lora-sft.ipynb"},
     ]
 
@@ -102,6 +103,7 @@ def test_build_leaves_bundles_and_solutions_out_by_default(tmp_path):
     write(tmp_path, "tp1.py", "# %%\n")
     built = manifest.build(
         sources_dir=tmp_path,
+        local_subdir="local",
         colab_subdir="colab",
         local_label="Notebook",
         colab_label="Colab",
@@ -110,7 +112,7 @@ def test_build_leaves_bundles_and_solutions_out_by_default(tmp_path):
     )
     assert "bundles" not in built
     assert [f["path"] for f in built["practicals"][0]["files"]] == [
-        "tp1.ipynb",
+        "local/tp1.ipynb",
         "colab/tp1.ipynb",
     ]
 
@@ -119,6 +121,7 @@ def test_build_lists_bundles_and_solution_files(tmp_path):
     write(tmp_path, "tp1.py", "# %%\n")
     built = manifest.build(
         sources_dir=tmp_path,
+        local_subdir="local",
         colab_subdir="colab",
         local_label="Notebook",
         colab_label="Colab",
@@ -131,7 +134,7 @@ def test_build_lists_bundles_and_solution_files(tmp_path):
     )
     assert built["bundles"] == [{"id": "student", "path": "tp.zip"}]
     assert built["practicals"][0]["files"][2:] == [
-        {"label": "Corrigé", "path": "solution/tp1.ipynb", "solution": True},
+        {"label": "Corrigé", "path": "solution/local/tp1.ipynb", "solution": True},
         {
             "label": "Corrigé (Colab)",
             "path": "solution/colab/tp1.ipynb",

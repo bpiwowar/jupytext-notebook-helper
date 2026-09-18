@@ -10,9 +10,9 @@ them in order and names the target for each.
  sources/tp1.py                          one percent-format file per TP
       │  make student / teacher / solution    (filter: markers, imports, inlining)
       ▼
- student/tp1.ipynb, student/colab/…      handed out
- teacher/tp1.ipynb, teacher/colab/…      kept (full solutions)
- student/solution/tp1.ipynb, …/colab/…   corrigé, released later
+ student/{local,colab}/tp1.ipynb         handed out
+ teacher/{local,colab}/tp1.ipynb         kept (full solutions)
+ solution/{local,colab}/tp1.ipynb        corrigé, released later
  student/tp-uv.zip, tp-uv-solution.zip   uv bundles (pyproject + uv.lock + notebooks)
       │  make check / run-teacher              does it run?
       │  make rsync                            DESTDIR_TP → SSH_HOST:SSH_PATH
@@ -47,9 +47,9 @@ In the cells, `[[student]] … [[/student]]` marks what students must write,
 
 | Target     | Produces |
 |------------|----------|
-| `student`  | `$(DESTDIR_TP)/<name>.ipynb`, `…/colab/<name>.ipynb`, `$(ZIP)` |
-| `teacher`  | `$(TEACHER_DIR)/<name>.ipynb`, `…/colab/<name>.ipynb` |
-| `solution` | `$(SOLUTION_DIR)/<name>.ipynb`, `…/colab/<name>.ipynb`, `$(SOLUTION_ZIP)` |
+| `student`  | `$(DESTDIR_TP)/{local,colab}/<name>.ipynb`, `$(ZIP)` |
+| `teacher`  | `$(TEACHER_DIR)/{local,colab}/<name>.ipynb` |
+| `solution` | `$(SOLUTION_DIR)/{local,colab}/<name>.ipynb`, `$(SOLUTION_ZIP)` |
 | `bundle`   | the zips only |
 
 The filter derives each variant from the same source. It gathers imports into a
@@ -74,7 +74,7 @@ All but `check-bundle` also take a single notebook: `make check:<name>`.
 
 `make rsync` builds `student` and copies `$(DESTDIR_TP)/` to
 `$(SSH_HOST):$(SSH_PATH)`. Only what `RSYNC_INCLUDE` matches is uploaded
-(default `colab/ *.ipynb *.zip`), plus `data/` when `RSYNC_DATA` is set.
+(default `local/ colab/ *.ipynb *.zip`), plus `data/` when `RSYNC_DATA` is set.
 
 The solutions are controlled by one switch, `PUBLISH_SOLUTIONS`:
 

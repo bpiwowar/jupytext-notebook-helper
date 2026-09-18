@@ -20,17 +20,17 @@ This generates the four variants per source plus a `uv` bundle
 `make solution` target for a student-facing corrigé:
 
 ```
-sources/tp1.py  ->  $(DESTDIR_TP)/tp1.ipynb          student, local
+sources/tp1.py  ->  $(DESTDIR_TP)/local/tp1.ipynb    student, local
                 ->  $(DESTDIR_TP)/colab/tp1.ipynb    student, Colab
-                ->  $(TEACHER_DIR)/tp1.ipynb         teacher, local
+                ->  $(TEACHER_DIR)/local/tp1.ipynb   teacher, local
                 ->  $(TEACHER_DIR)/colab/tp1.ipynb   teacher, Colab
-                ->  $(SOLUTION_DIR)/tp1.ipynb        corrigé, local  (make solution)
+                ->  $(SOLUTION_DIR)/local/tp1.ipynb  corrigé, local  (make solution)
                 ->  $(SOLUTION_DIR)/colab/tp1.ipynb  corrigé, Colab  (make solution)
                  +  $(ZIP)                           uv bundle, local notebooks only
 ```
 
-The sub-directory name is `COLAB_SUBDIR` (default `colab`); it must not be
-empty. See the header of `jupytext_notebook_helper/tp.mk` for the full list of
+The sub-directory names are `LOCAL_SUBDIR` (default `local`) and
+`COLAB_SUBDIR` (default `colab`); neither may be empty, and they must differ. See the header of `jupytext_notebook_helper/tp.mk` for the full list of
 configurable variables.
 
 `make help` (the default goal) lists every target, one section per kind of work:
@@ -130,10 +130,10 @@ SSH_PATH := public_html/mycourse/practical
 RSYNC_DATA := ../data     # optional: symlinked into $(DESTDIR_TP) as `data`
 ```
 
-`RSYNC_INCLUDE` (default `colab/ *.ipynb *.zip`) is what reaches the server.
-The `colab/` entry is not decoration: rsync never descends into a directory it
-was not told to include, so without it the Colab notebooks silently stop being
-deployed. Bulk data (caches, corpora) travels separately, through `rsync-data`,
+`RSYNC_INCLUDE` (default `local/ colab/ *.ipynb *.zip`) is what reaches the
+server. The `local/` and `colab/` entries are not decoration: rsync never
+descends into a directory it was not told to include, so without them the
+notebooks silently stop being deployed. Bulk data (caches, corpora) travels separately, through `rsync-data`,
 defined when `SSH_STUDENT_DATA` is set:
 
 ```makefile

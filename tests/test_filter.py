@@ -643,8 +643,8 @@ def test_depfile_targets_are_the_ones_tp_mk_builds(tmp_path):
 
     written = (depdir / "tp1-embeddings.d").read_text()
     targets = written.split(":", 1)[0].split()
-    assert "student/tp1-embeddings.ipynb" in targets
+    assert "student/local/tp1-embeddings.ipynb" in targets
     assert "student/colab/tp1-embeddings.ipynb" in targets
-    assert "teacher/tp1-embeddings.ipynb" in targets
+    assert "teacher/local/tp1-embeddings.ipynb" in targets
     assert "teacher/colab/tp1-embeddings.ipynb" in targets
     assert not [t for t in targets if ".student.ipynb" in t or ".teacher.ipynb" in t]

@@ -132,42 +132,42 @@ def _make(cwd, *targets):
 # --------------------------------------------------------------------------
 
 
-def test_teacher_puts_colab_variants_in_a_subdirectory(tmp_path):
+def test_teacher_puts_each_variant_in_its_own_subdirectory(tmp_path):
     course = _course(tmp_path)
     _make(course, "teacher")
 
     for name in ("tp1", "tp2"):
-        assert (course / "teacher" / f"{name}.ipynb").is_file()
+        assert (course / "teacher" / "local" / f"{name}.ipynb").is_file()
         assert (course / "teacher" / "colab" / f"{name}.ipynb").is_file()
-        # the old flat name is gone
-        assert not (course / "teacher" / f"{name}.colab.ipynb").exists()
 
-    # nothing but the local notebooks and the colab/ directory at the top level
+    # nothing but the two variant directories at the top level
     assert sorted(p.name for p in (course / "teacher").iterdir()) == [
         "colab",
-        "tp1.ipynb",
-        "tp2.ipynb",
+        "local",
     ]
 
 
-def test_solution_puts_colab_variants_in_a_subdirectory(tmp_path):
+def test_solution_puts_each_variant_in_its_own_subdirectory(tmp_path):
     course = _course(tmp_path, names=("tp1",))
     _make(course, "solution")
 
-    assert (course / "solution" / "tp1.ipynb").is_file()
+    assert (course / "solution" / "local" / "tp1.ipynb").is_file()
     assert (course / "solution" / "colab" / "tp1.ipynb").is_file()
-    assert not (course / "solution" / "tp1.colab.ipynb").exists()
+    assert sorted(p.name for p in (course / "solution").iterdir()) == [
+        "colab",
+        "local",
+    ]
 
 
 def test_student_notebooks_and_bundle_layout(tmp_path):
     course = _course(tmp_path, names=("tp1",))
     # `student` also builds the uv bundle, which needs `uv lock`; build only the
     # notebook targets so the test stays offline.
-    _make(course, "student/tp1.ipynb", "student/colab/tp1.ipynb")
+    _make(course, "student/local/tp1.ipynb", "student/colab/tp1.ipynb")
 
-    assert (course / "student" / "tp1.ipynb").is_file()
+    assert (course / "student" / "local" / "tp1.ipynb").is_file()
     assert (course / "student" / "colab" / "tp1.ipynb").is_file()
-    assert not (course / "student" / "tp1.colab.ipynb").exists()
+    assert not (course / "student" / "tp1.ipynb").exists()
 
 
 def test_colab_subdirectory_is_configurable(tmp_path):
@@ -178,10 +178,26 @@ def test_colab_subdirectory_is_configurable(tmp_path):
     assert not (course / "teacher" / "colab").exists()
 
 
-def test_empty_colab_subdirectory_is_rejected(tmp_path):
+def test_local_subdirectory_is_configurable(tmp_path):
     course = _course(tmp_path, names=("tp1",))
-    with pytest.raises(AssertionError, match="COLAB_SUBDIR must not be empty"):
-        _make(course, "COLAB_SUBDIR=", "teacher")
+    _make(course, "LOCAL_SUBDIR=uv", "teacher")
+
+    assert (course / "teacher" / "uv" / "tp1.ipynb").is_file()
+    assert not (course / "teacher" / "local").exists()
+
+
+@pytest.mark.parametrize(
+    "override,message",
+    [
+        ("COLAB_SUBDIR=", "COLAB_SUBDIR must not be empty"),
+        ("LOCAL_SUBDIR=", "LOCAL_SUBDIR must not be empty"),
+        ("LOCAL_SUBDIR=colab", "LOCAL_SUBDIR and COLAB_SUBDIR must differ"),
+    ],
+)
+def test_bad_variant_subdirectories_are_rejected(tmp_path, override, message):
+    course = _course(tmp_path, names=("tp1",))
+    with pytest.raises(AssertionError, match=message):
+        _make(course, override, "teacher")
 
 
 # --------------------------------------------------------------------------
@@ -198,7 +214,7 @@ def test_colab_variant_gets_the_install_cell_and_the_local_one_does_not(tmp_path
     _make(course, "teacher")
 
     colab = _text(course / "teacher" / "colab" / "tp1.ipynb")
-    local = _text(course / "teacher" / "tp1.ipynb")
+    local = _text(course / "teacher" / "local" / "tp1.ipynb")
     assert "%pip install" in colab
     assert "%pip install" not in local
     # both are teacher variants: the teacher-tagged cell survives
@@ -245,7 +261,29 @@ def test_touching_a_source_rebuilds_only_its_variants(tmp_path):
         if path.stat().st_mtime_ns != before
     }
     # both tp1 variants, and only those
-    assert rebuilt == {"teacher/tp1.ipynb", "teacher/colab/tp1.ipynb"}
+    assert rebuilt == {"teacher/local/tp1.ipynb", "teacher/colab/tp1.ipynb"}
+
+
+def test_editing_an_inlined_module_rebuilds_every_variant(tmp_path):
+    """The depfile names the course's own paths, solutions under student/ too."""
+    course = _course(tmp_path, names=("tp1",), makefile_head="SOLUTION_DIR := student/solution\n")
+    (course / "src").mkdir(exist_ok=True)
+    (course / "src" / "helper.py").write_text("VALUE = 1\n")
+    src = course / "sources" / "tp1.py"
+    src.write_text(src.read_text() + "\n# %%\nfrom helper import VALUE\nprint(VALUE)\n")
+    _make(course, "teacher", "solution")
+
+    depfile = (course / ".deps" / "tp1.d").read_text()
+    for path in ("teacher/local/", "student/solution/local/", "student/solution/colab/"):
+        assert f"{path}tp1.ipynb" in depfile.split(":", 1)[0]
+
+    before = (course / "student" / "solution" / "local" / "tp1.ipynb").stat().st_mtime_ns
+    helper = course / "src" / "helper.py"
+    helper.write_text("VALUE = 2\n")
+    _age(helper, -2)
+    _make(course, "teacher", "solution")
+    after = (course / "student" / "solution" / "local" / "tp1.ipynb").stat().st_mtime_ns
+    assert after != before
 
 
 # --------------------------------------------------------------------------
@@ -255,26 +293,33 @@ def test_touching_a_source_rebuilds_only_its_variants(tmp_path):
 
 def test_clean_removes_the_colab_subdirectories(tmp_path):
     course = _course(tmp_path, names=("tp1",))
-    _make(course, "teacher", "solution", "student/tp1.ipynb", "student/colab/tp1.ipynb")
+    _make(course, "teacher", "solution", "student/local/tp1.ipynb", "student/colab/tp1.ipynb")
     _make(course, "clean")
 
     assert not (course / "teacher").exists()
     assert not (course / "solution").exists()
     assert not (course / "student" / "colab").exists()
-    assert not (course / "student" / "tp1.ipynb").exists()
+    assert not (course / "student" / "local").exists()
 
 
-def test_clean_removes_legacy_flat_colab_notebooks(tmp_path):
-    """An upgraded checkout still has the pre-0.8 <name>.colab.ipynb on disk."""
+def test_clean_removes_notebooks_at_their_old_paths(tmp_path):
+    """An upgraded checkout still has <name>.colab.ipynb (before 0.8) and
+    <name>.ipynb at the root of an output directory (before 2.0) on disk."""
     course = _course(tmp_path, names=("tp1",))
     for d in ("student", "teacher", "solution"):
         (course / d).mkdir(exist_ok=True)
         (course / d / "tp1.colab.ipynb").write_text("{}")
+        (course / d / "tp1.ipynb").write_text("{}")
+    (course / "student" / "notes.ipynb").write_text("{}")
 
     _make(course, "clean")
 
     for d in ("student", "teacher", "solution"):
         assert not (course / d / "tp1.colab.ipynb").exists()
+        assert not (course / d / "tp1.ipynb").exists()
+    # the student directory is cleaned file by file: what the build did not
+    # write stays
+    assert (course / "student" / "notes.ipynb").exists()
 
 
 # --------------------------------------------------------------------------
@@ -285,8 +330,8 @@ def test_clean_removes_legacy_flat_colab_notebooks(tmp_path):
 def test_help_documents_the_new_layout(tmp_path):
     course = _course(tmp_path, names=("tp1",))
     out = _make(course, "help").stdout
-    assert "student/colab/<name>.ipynb" in out
-    assert "teacher/colab/<name>.ipynb" in out
+    assert "local/<name>.ipynb" in out
+    assert "colab/<name>.ipynb" in out
 
 
 # --------------------------------------------------------------------------
@@ -340,6 +385,10 @@ def test_rsync_keeps_the_solutions_back_until_published(tmp_path):
     # before any include, since rsync stops at the first match
     assert held.index("--exclude") < held.index("--include")
 
+    # both variant directories, or rsync never descends into them
+    assert '--include "local/"' in held
+    assert '--include "colab/"' in held
+
     released = _rsync_line(course, "PUBLISH_SOLUTIONS=yes")
     assert '--include "/solution/**"' in released
     assert '--include "/tp-solution.zip"' in released
@@ -367,6 +416,6 @@ def test_manifest_lists_the_solutions_only_once_published(tmp_path):
     assert released["bundles"][1] == {"id": "solution", "path": "tp-solution.zip"}
     assert {
         "label": "Corrigé, local",
-        "path": "solution/tp1.ipynb",
+        "path": "solution/local/tp1.ipynb",
         "solution": True,
     } in released["practicals"][0]["files"]

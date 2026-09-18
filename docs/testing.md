@@ -70,7 +70,7 @@ make show-run                           # state, duration and path, per notebook
 
 **What is not run again.** Each notebook has a stamp under `$(RUN_DIR)/.done/`,
 named after the profile in force (`auto` when `NOTEBOOK_PROFILE` is unset), and
-depending on `$(TEACHER_DIR)/<name>.ipynb` — which in turn depends on the
+depending on `$(TEACHER_DIR)/local/<name>.ipynb` — which in turn depends on the
 source. A notebook is therefore re-run when its source changed, when the profile
 changed, or when the last run failed (a failure leaves no stamp), and skipped
 otherwise. `make run-again` forgets every stamp without deleting the notebooks.

@@ -19,9 +19,9 @@ So this module writes them out::
         { "id": "lora-sft",
           "name": "Affinage LoRA d'un décodeur",
           "files": [
-            { "label": "Notebook", "path": "lora-sft.ipynb" },
+            { "label": "Notebook", "path": "local/lora-sft.ipynb" },
             { "label": "Colab",    "path": "colab/lora-sft.ipynb" },
-            { "label": "Corrigé",  "path": "solution/lora-sft.ipynb",
+            { "label": "Corrigé",  "path": "solution/local/lora-sft.ipynb",
               "solution": true }
           ] }
       ]
@@ -159,6 +159,7 @@ def parse_bundle(value: str) -> dict[str, str]:
 def build(
     *,
     sources_dir: Path,
+    local_subdir: str,
     colab_subdir: str,
     local_label: str,
     colab_label: str,
@@ -172,14 +173,16 @@ def build(
     practicals = []
     for source in sorted(sources_dir.glob("*.py")):
         stem = source.stem
-        files: list[dict[str, Any]] = [{"label": local_label, "path": f"{stem}.ipynb"}]
+        files: list[dict[str, Any]] = [
+            {"label": local_label, "path": f"{local_subdir}/{stem}.ipynb"}
+        ]
         if colab_subdir:
             files.append({"label": colab_label, "path": f"{colab_subdir}/{stem}.ipynb"})
         if solution_subdir:
             files.append(
                 {
                     "label": solution_label,
-                    "path": f"{solution_subdir}/{stem}.ipynb",
+                    "path": f"{solution_subdir}/{local_subdir}/{stem}.ipynb",
                     "solution": True,
                 }
             )
@@ -221,6 +224,11 @@ def main(argv: list[str] | None = None) -> int:
         description="Write a JSON description of the practicals",
     )
     parser.add_argument("--sources", type=Path, default=Path("sources"))
+    parser.add_argument(
+        "--local-subdir",
+        default="local",
+        help="sub-directory of the local variants",
+    )
     parser.add_argument(
         "--colab-subdir",
         default="colab",
@@ -264,6 +272,7 @@ def main(argv: list[str] | None = None) -> int:
 
     manifest = build(
         sources_dir=args.sources,
+        local_subdir=args.local_subdir.strip("/"),
         colab_subdir=args.colab_subdir,
         local_label=args.local_label,
         colab_label=args.colab_label,
