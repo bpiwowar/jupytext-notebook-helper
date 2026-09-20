@@ -426,6 +426,126 @@ def test_manifest_lists_the_solutions_only_once_published(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# index.html
+# --------------------------------------------------------------------------
+
+BUNDLE_MAKEFILE = textwrap.dedent(
+    """
+    ZIP              := student/tp.zip
+    BUNDLE_PYPROJECT := pyproject.toml
+    BUNDLE_LOCK      := uv.lock
+    """
+)
+
+INDEX_MAKEFILE = BUNDLE_MAKEFILE + "INDEX_TITLE := Practicals, RL\n"
+
+HEADED_SOURCE = textwrap.dedent(
+    """
+    # ---
+    # jupyter:
+    #   metadata:
+    #     practical_name: Deep Q-Network
+    #     practical_description: From the table to a network
+    # ---
+
+    # %%
+    answer = 42
+    """
+).lstrip()
+
+
+def _indexed_course(tmp_path, **kwargs):
+    """A course with an index page and one source carrying a real header."""
+    course = _course(tmp_path, names=("tp1",), makefile_head=INDEX_MAKEFILE, **kwargs)
+    source = course / "sources" / "tp1.py"
+    source.write_text(HEADED_SOURCE)
+    _age(source)
+    return course
+
+
+@pytest.mark.skipif(shutil.which("zip") is None, reason="zip is not available")
+def test_index_lists_the_practicals_their_files_and_the_archive(tmp_path):
+    course = _indexed_course(tmp_path)
+    _make(course, "index")
+
+    page = (course / "student" / "index.html").read_text()
+    assert "<h1>Practicals, RL</h1>" in page
+    # the header's name and description, not the file name
+    assert "Deep Q-Network" in page
+    assert "From the table to a network" in page
+    assert 'href="local/tp1.ipynb"' in page
+    assert 'href="colab/tp1.ipynb"' in page
+    # the archive, with the size it actually has
+    assert 'href="tp.zip"' in page
+    assert "Notebooks and environment" in page
+
+
+@pytest.mark.skipif(shutil.which("zip") is None, reason="zip is not available")
+def test_student_builds_the_index_only_when_the_course_asked_for_one(tmp_path):
+    course = _indexed_course(tmp_path)
+    _make(course, "student")
+    assert (course / "student" / "index.html").exists()
+
+    (tmp_path / "plain").mkdir()
+    plain = _course(tmp_path / "plain", names=("tp1",), makefile_head=BUNDLE_MAKEFILE)
+    _make(plain, "student")
+    assert not (plain / "student" / "index.html").exists()
+
+
+@pytest.mark.skipif(shutil.which("zip") is None, reason="zip is not available")
+def test_an_unchanged_course_leaves_the_index_file_alone(tmp_path):
+    course = _indexed_course(tmp_path)
+    _make(course, "index")
+    page = course / "student" / "index.html"
+    before = page.stat().st_mtime
+    _age(page)
+    _make(course, "index")
+    # rewritten bytes would be a new timestamp, and one more rsync upload
+    assert page.stat().st_mtime < before
+
+
+@pytest.mark.skipif(shutil.which("zip") is None, reason="zip is not available")
+def test_the_index_follows_a_renamed_practical(tmp_path):
+    course = _indexed_course(tmp_path)
+    _make(course, "index")
+    _age(course / "student" / "index.html")
+    source = course / "sources" / "tp1.py"
+    source.write_text(HEADED_SOURCE.replace("Deep Q-Network", "DQN, at last"))
+    _make(course, "index")
+    page = (course / "student" / "index.html").read_text()
+    assert "DQN, at last" in page
+    assert "Deep Q-Network" not in page
+
+
+@pytest.mark.skipif(shutil.which("zip") is None, reason="zip is not available")
+def test_the_archive_wording_is_the_course_own(tmp_path):
+    course = _indexed_course(tmp_path)
+    _make(course, "index", "INDEX_STUDENT_LABEL=Tout le TP, avec uv")
+    page = (course / "student" / "index.html").read_text()
+    assert "Tout le TP, avec uv" in page
+
+
+def test_index_without_a_title_says_so(tmp_path):
+    course = _course(tmp_path, names=("tp1",))
+    out = _make(course, "index", "INDEX_ZIPS=", check=False)
+    assert out.returncode != 0
+    assert "INDEX_TITLE is not set" in out.stdout + out.stderr
+
+
+def test_rsync_carries_the_index_page(tmp_path):
+    course = _course(tmp_path, names=("tp1",))
+    assert '--include "*.html"' in _rsync_line(course)
+
+
+@pytest.mark.skipif(shutil.which("zip") is None, reason="zip is not available")
+def test_clean_takes_the_index_page_down(tmp_path):
+    course = _indexed_course(tmp_path)
+    _make(course, "index")
+    _make(course, "clean")
+    assert not (course / "student" / "index.html").exists()
+
+
+# --------------------------------------------------------------------------
 # publish-git
 # --------------------------------------------------------------------------
 

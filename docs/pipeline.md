@@ -14,6 +14,7 @@ them in order and names the target for each.
  teacher/{local,colab}/tp1.ipynb         kept (full solutions)
  solution/{local,colab}/tp1.ipynb        corrigé, released later
  student/tp-uv.zip, tp-uv-solution.zip   uv bundles (pyproject + uv.lock + notebooks)
+ student/index.html                      the page that hands them out (INDEX_TITLE)
       │  make check / run-teacher              does it run?
       │  make rsync                            DESTDIR_TP → SSH_HOST:SSH_PATH
       │  make publish-git                      DESTDIR_TP → a public git repo
@@ -38,8 +39,12 @@ name comes from the header metadata (key `MANIFEST_NAME_KEY`, default
 # jupyter:
 #   metadata:
 #     practical_name: Affinage LoRA d'un décodeur
+#     practical_description: Adapter un décodeur sur un corpus d'instructions
 # ---
 ```
+
+`practical_description` is a one-line summary; it is what the index page shows
+next to the name, and it reaches the manifest as `description`.
 
 In the cells, `[[student]] … [[/student]]` marks what students must write,
 `[[remove]] … [[/remove]]` marks what only the instructor sees, and cell tags
@@ -54,6 +59,7 @@ In the cells, `[[student]] … [[/student]]` marks what students must write,
 | `teacher`  | `$(TEACHER_DIR)/{local,colab}/<name>.ipynb` |
 | `solution` | `$(SOLUTION_DIR)/{local,colab}/<name>.ipynb`, `$(SOLUTION_ZIP)` |
 | `bundle`   | the zips only |
+| `index`    | `$(INDEX_HTML)`, the hand-out page — only with `INDEX_TITLE` |
 
 The filter derives each variant from the same source. It gathers imports into a
 single cell, inlines the course library functions a notebook uses, and adds a
@@ -77,7 +83,8 @@ All but `check-bundle` also take a single notebook: `make check:<name>`.
 
 `make rsync` builds `student` and copies `$(DESTDIR_TP)/` to
 `$(SSH_HOST):$(SSH_PATH)`. Only what `RSYNC_INCLUDE` matches is uploaded
-(default `local/ colab/ *.ipynb *.zip`), plus `data/` when `RSYNC_DATA` is set.
+(default `local/ colab/ *.ipynb *.zip *.html`), plus `data/` when `RSYNC_DATA`
+is set.
 
 The solutions are controlled by one switch, `PUBLISH_SOLUTIONS`:
 
@@ -92,6 +99,29 @@ commits it; `make publish-git-push` pushes. Two things the server cannot give:
 a notebook Google Colab opens (it imports from GitHub, Drive or a gist only)
 and one a student updates with `git pull`. `PUBLISH_SOLUTIONS` applies here
 too — remembering that a git history keeps what it was once given.
+
+## 4c. The page that hands them out
+
+A directory of `.ipynb` files is not a hand-out: a student landing on
+`$(SSH_PATH)` sees every notebook, the zip and the variant directories in
+whatever order the server lists them. Setting `INDEX_TITLE` adds
+`$(DESTDIR_TP)/index.html` — the archives to download first, then one row per
+practical with its description and a link per variant — built by `make
+student`, deployed by `rsync` and mirrored by `publish-git` with everything
+else there.
+
+```makefile
+INDEX_TITLE  := Reinforcement learning — practicals
+INDEX_INTRO  := sources/index-intro.html   # a fragment, inserted verbatim
+INDEX_FOOTER := Master MIND — Sorbonne Université
+```
+
+The page is built from the same description `make manifest` writes, so the
+links cannot drift from what is deployed: `local/` and `colab/` paths relative
+to the page, the Colab ones absolute when the course publishes to GitHub, and
+the corrigé only once `PUBLISH_SOLUTIONS` says yes. It is one self-contained
+file — inline CSS, no script, nothing dated — and it is only rewritten when its
+content changes, so an unchanged course does not re-upload it.
 
 ## 5. Announce
 

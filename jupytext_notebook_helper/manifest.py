@@ -18,6 +18,7 @@ So this module writes them out::
       "practicals": [
         { "id": "lora-sft",
           "name": "Affinage LoRA d'un décodeur",
+          "description": "Adapter un décodeur sur un corpus d'instructions",
           "files": [
             { "label": "Notebook", "path": "local/lora-sft.ipynb" },
             { "label": "Colab",    "path": "colab/lora-sft.ipynb",
@@ -48,15 +49,18 @@ that is how a course keeps its corrigé unannounced until it is released — and
 each such file carries ``"solution": true``.
 
 The display name is the ``practical_name`` key of the source's percent-format
-header::
+header, and ``practical_description`` a one-line summary the reader may show
+next to it::
 
     # ---
     # jupyter:
     #   metadata:
     #     practical_name: Affinage LoRA d'un décodeur
+    #     practical_description: Adapter un décodeur sur un corpus d'instructions
     # ---
 
-and falls back to the file name, title-cased.
+The name falls back to the file name, title-cased; a source without a
+description simply has no ``description`` key.
 
 This reads the headers only: no notebook is built, so it is cheap enough to run
 before every build of the consumer (`make manifest`).
@@ -112,16 +116,24 @@ def read_header(source: Path) -> dict[str, Any]:
     return header if isinstance(header, dict) else {}
 
 
-def display_name(source: Path, name_key: str) -> str:
-    """The practical's title, from the header, or the file name title-cased."""
+def metadata_value(source: Path, key: str) -> str | None:
+    """A ``jupyter.metadata`` string of the header, stripped, or ``None``."""
     header = read_header(source)
     jupyter = header.get("jupyter") if isinstance(header, dict) else None
     if isinstance(jupyter, dict):
         metadata = jupyter.get("metadata")
         if isinstance(metadata, dict):
-            value = metadata.get(name_key)
+            value = metadata.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+    return None
+
+
+def display_name(source: Path, name_key: str) -> str:
+    """The practical's title, from the header, or the file name title-cased."""
+    value = metadata_value(source, name_key)
+    if value is not None:
+        return value
     return " ".join(word.capitalize() for word in source.stem.split("-"))
 
 
@@ -203,6 +215,7 @@ def build(
     colab_label: str,
     name_key: str,
     url: str,
+    description_key: str | None = None,
     bundles: list[dict[str, str]] | None = None,
     solution_subdir: str | None = None,
     solution_label: str = "Solution",
@@ -237,9 +250,17 @@ def build(
                 )
                 entry["solution"] = True
                 files.append(entry)
-        practicals.append(
-            {"id": stem, "name": display_name(source, name_key), "files": files}
+        entry: dict[str, Any] = {
+            "id": stem,
+            "name": display_name(source, name_key),
+        }
+        description = (
+            metadata_value(source, description_key) if description_key else None
         )
+        if description:
+            entry["description"] = description
+        entry["files"] = files
+        practicals.append(entry)
     manifest: dict[str, Any] = {"version": 1, "baseUrl": url}
     if bundles:
         manifest["bundles"] = bundles
@@ -247,18 +268,25 @@ def build(
     return manifest
 
 
-def write_if_changed(output: Path, manifest: dict[str, Any]) -> bool:
-    """Write the manifest, and say whether it actually changed.
+def write_text_if_changed(output: Path, text: str) -> bool:
+    """Write a generated file, and say whether it actually changed.
 
-    The consumer's build keys off this file's timestamp, so rewriting an
-    identical manifest would rebuild it for nothing on every run.
+    What reads these files keys off their timestamp — the consumer's build for
+    the manifest, rsync for the index page — so rewriting identical bytes
+    would rebuild or re-upload them for nothing on every run.
     """
-    text = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
     if output.exists() and output.read_text(encoding="utf-8") == text:
         return False
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(text, encoding="utf-8")
     return True
+
+
+def write_if_changed(output: Path, manifest: dict[str, Any]) -> bool:
+    """Write the manifest, and say whether it actually changed."""
+    return write_text_if_changed(
+        output, json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -298,6 +326,12 @@ def main(argv: list[str] | None = None) -> int:
         "--name-key",
         default="practical_name",
         help="header key holding the display name (under jupyter.metadata)",
+    )
+    parser.add_argument(
+        "--description-key",
+        default="practical_description",
+        help="header key holding a one-line description (under jupyter.metadata); "
+        "sources that have it get a `description` in their entry",
     )
     parser.add_argument(
         "--colab-git-url",
@@ -344,6 +378,7 @@ def main(argv: list[str] | None = None) -> int:
         local_label=args.local_label,
         colab_label=args.colab_label,
         name_key=args.name_key,
+        description_key=args.description_key,
         bundles=[parse_bundle(value) for value in args.bundle],
         solution_subdir=args.solution_subdir.strip("/")
         if args.solution_subdir

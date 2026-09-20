@@ -133,7 +133,7 @@ SSH_PATH := public_html/mycourse/practical
 RSYNC_DATA := ../data     # optional: symlinked into $(DESTDIR_TP) as `data`
 ```
 
-`RSYNC_INCLUDE` (default `local/ colab/ *.ipynb *.zip`) is what reaches the
+`RSYNC_INCLUDE` (default `local/ colab/ *.ipynb *.zip *.html`) is what reaches the
 server. The `local/` and `colab/` entries are not decoration: rsync never
 descends into a directory it was not told to include, so without them the
 notebooks silently stop being deployed. Bulk data (caches, corpora) travels separately, through `rsync-data`,
@@ -144,6 +144,37 @@ STUDENT_DATA_DIR      := student-data
 SSH_STUDENT_DATA      := ssh.example.org
 SSH_STUDENT_DATA_PATH := student-data/cache
 ```
+
+## The index page: `INDEX_TITLE`
+
+What a student opens is a directory listing: every `.ipynb`, the zip and the
+variant directories, in server order, with nothing saying which to take first.
+Setting `INDEX_TITLE` replaces it with a page, `$(DESTDIR_TP)/index.html` —
+the archives to download, then one row per practical with a link per variant:
+
+```makefile
+INDEX_TITLE  := Reinforcement learning — practicals
+INDEX_INTRO  := sources/index-intro.html   # a fragment, inserted verbatim
+INDEX_FOOTER := Master MIND — Sorbonne Université
+INDEX_LANG   := en
+# the archives' wording on the page; empty keeps "Notebooks and environment"
+INDEX_STUDENT_LABEL  := Everything, as a uv project
+INDEX_SOLUTION_LABEL := The corrigés
+```
+
+`make student` builds it, `rsync` deploys it and `publish-git` mirrors it. It
+is written from the same description `make manifest` produces — names and
+descriptions from the source headers (`practical_name`,
+`practical_description`), Colab links absolute when `GIT_PUBLISH_URL` is a
+GitHub repository, corrigés listed only once `PUBLISH_SOLUTIONS` says yes — so
+the page cannot list something the deployment does not carry. `make index`
+builds it alone.
+
+The page is one self-contained file: inline CSS (light and dark), no script,
+no font to fetch, and nothing dated in it, so a build that changes nothing
+leaves the file untouched and rsync has nothing to upload. Whatever the course
+wants to say on top — which Python, where to ask for help, the schedule —
+goes in the `INDEX_INTRO` fragment, which is inserted verbatim.
 
 ## Publishing to a public git repository: `make publish-git`
 

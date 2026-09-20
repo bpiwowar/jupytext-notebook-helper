@@ -260,3 +260,50 @@ def test_main_writes_the_colab_urls(tmp_path):
         "https://colab.research.google.com/github/bpiwowar/course-lab/blob/trunk/"
         "colab/tp1.ipynb"
     )
+
+
+DESCRIBED = """\
+# ---
+# jupyter:
+#   metadata:
+#     practical_name: PPO
+#     practical_description: Clipped objective, on CartPole
+# ---
+
+# %%
+print("hello")
+"""
+
+
+def test_build_carries_the_description_when_the_header_has_one(tmp_path):
+    write(tmp_path, "ppo.py", DESCRIBED)
+    write(tmp_path, "dqn.py", HEADER)
+    built = manifest.build(
+        sources_dir=tmp_path,
+        local_subdir="local",
+        colab_subdir="colab",
+        local_label="Notebook",
+        colab_label="Colab",
+        name_key="practical_name",
+        description_key="practical_description",
+        url="",
+    )
+    described, plain = built["practicals"][1], built["practicals"][0]
+    assert described["description"] == "Clipped objective, on CartPole"
+    # the keys stay in reading order, and a source without one has no key
+    assert list(described) == ["id", "name", "description", "files"]
+    assert "description" not in plain
+
+
+def test_build_ignores_the_description_when_no_key_is_given(tmp_path):
+    write(tmp_path, "ppo.py", DESCRIBED)
+    built = manifest.build(
+        sources_dir=tmp_path,
+        local_subdir="local",
+        colab_subdir="colab",
+        local_label="Notebook",
+        colab_label="Colab",
+        name_key="practical_name",
+        url="",
+    )
+    assert "description" not in built["practicals"][0]

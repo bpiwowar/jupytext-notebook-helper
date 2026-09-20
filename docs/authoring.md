@@ -15,6 +15,26 @@ kernel). Cells run against a real kernel, and saving writes the plain `.py`
 back: no paired `.ipynb`, nothing to keep in sync. Outputs are not kept, which
 is what a source wants.
 
+## The header
+
+The percent header's `jupyter.metadata` is where a source says what it is
+called, for the index page and the manifest:
+
+```python
+# ---
+# jupyter:
+#   metadata:
+#     practical_name: "Soft Actor-Critic"
+#     practical_description: "Off-policy learning: TD3 plus an entropy bonus"
+# ---
+```
+
+Both are optional: without a name the file name is used, title-cased, and
+without a description the practical simply has none. Quote the values — a `: `
+inside an unquoted YAML scalar is read as a mapping and loses the whole
+header. The keys are configurable (`MANIFEST_NAME_KEY`,
+`MANIFEST_DESCRIPTION_KEY`).
+
 ## Markers
 
 An ordinary percent notebook, with a small marker vocabulary interpreted by the

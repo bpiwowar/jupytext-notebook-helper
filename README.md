@@ -111,11 +111,11 @@ make check      # run every source, with the code students get
 
 | Page | Covers |
 |------|--------|
-| [The pipeline, end to end](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/pipeline.md) | source → build → check → deploy → manifest, with the target for each step |
+| [The pipeline, end to end](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/pipeline.md) | source → build → check → deploy → index page → manifest, with the target for each step |
 | [Writing a source](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/authoring.md) | markers, gathered imports, inlined library code, the Colab install cell |
 | [Runtime helpers](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/runtime.md) | `hardware()`, profiles, where output goes |
 | [Checking and running](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/testing.md) | `check`, `check-raw`, `lab`, `run-teacher`, `check-resources` |
-| [Setting up a course](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/course-setup.md) | the `Makefile`, `[tool.jupytext-notebook-helper]`, bundles, solutions, `rsync` |
+| [Setting up a course](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/course-setup.md) | the `Makefile`, `[tool.jupytext-notebook-helper]`, bundles, solutions, `rsync`, the index page |
 | [Breaking changes](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/breaking.md) | what changed between major versions, and how to migrate |
 
 The header of `jupytext_notebook_helper/tp.mk` lists every configurable

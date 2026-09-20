@@ -99,6 +99,24 @@ BUNDLE_EXTRA          ?=
 SOLUTION_ZIP          ?=
 # Whether the solutions are released (deployed by `rsync`, listed by `manifest`).
 PUBLISH_SOLUTIONS     ?= no
+# The index page handed to the students, at the root of $(DESTDIR_TP) — see the
+# `index` target below. INDEX_TITLE is the switch: empty means no page.
+INDEX_TITLE           ?=
+# Where it is written. It must stay inside $(DESTDIR_TP): the links are relative
+# to it, and it is deployed with the notebooks.
+INDEX_HTML            ?= $(DESTDIR_TP)/index.html
+# An HTML fragment inserted under the title (what the course is, which Python,
+# where to ask for help). Inserted verbatim — it is the course's own file.
+INDEX_INTRO           ?=
+# A line at the bottom of the page, and the page's language tag.
+INDEX_FOOTER          ?=
+INDEX_LANG            ?= en
+# How the archives are named on the page. Empty keeps the index's own wording
+# ("Notebooks and environment" / "Solutions").
+INDEX_STUDENT_LABEL   ?=
+INDEX_SOLUTION_LABEL  ?=
+# The manifest the page is built from: a build artifact, not for the server.
+INDEX_MANIFEST        ?= $(BUNDLE_DIR)/index-manifest.json
 # Passed to the filter for the Colab install cell; --uv-root tells it where
 # uv.lock/pyproject.toml live (relative to the build dir).
 PIP_ARGS       ?= --uv-root $(ROOT)
@@ -243,7 +261,10 @@ define build_bundle
 	$(if $(2),cp $(2) $(BUNDLE_DIR)/$(notdir $(1))/notebooks/)
 	$(if $(BUNDLE_EXTRA),cp $(BUNDLE_EXTRA) $(BUNDLE_DIR)/$(notdir $(1))/)
 	rm -f $(1)
-	cd $(BUNDLE_DIR)/$(notdir $(1)) && zip -r -q $(abspath $(1)) . && cd -
+	# `ZIP=` first: make exports a variable set on ITS command line, and zip
+	# reads $ZIP as its own default options — `make ZIP=out/tp.zip` would then
+	# hand zip a second output file and fail there rather than here.
+	cd $(BUNDLE_DIR)/$(notdir $(1)) && ZIP= zip -r -q $(abspath $(1)) . && cd -
 	@rm -rf $(BUNDLE_DIR)/$(notdir $(1))
 	@echo "Built $(1)$(if $(2),, (no notebooks))"
 endef
@@ -384,7 +405,8 @@ lab-test: $(TEACHER_LOCAL)
 clean:
 	@rm -rf $(TEACHER_DIR) $(SOLUTION_DIR) $(DEPDIR) $(TESTED_DIR) $(RESOLVED_DIR) \
 		$(BUNDLE_DIR) $(STUDENT_ENV_DIR) $(STUDENT_LOCAL) $(STUDENT_COLAB) \
-		$(STUDENT_LOCAL_DIR) $(STUDENT_COLAB_DIR) $(LEGACY_OUTPUTS) $(ZIP) $(SOLUTION_ZIP)
+		$(STUDENT_LOCAL_DIR) $(STUDENT_COLAB_DIR) $(LEGACY_OUTPUTS) $(ZIP) $(SOLUTION_ZIP) \
+		$(INDEX_HTML)
 
 # ---- run-teacher: execute the teacher notebooks, and KEEP the result -------
 #
@@ -538,7 +560,7 @@ SSH_PATH ?=
 #: What of $(DESTDIR_TP) reaches the server. rsync never descends into a
 #: directory it was not told to include, so the two variant directories must
 #: be listed — without them the notebooks silently stop being deployed.
-RSYNC_INCLUDE ?= $(LOCAL_SUBDIR)/ $(COLAB_SUBDIR)/ *.ipynb *.zip
+RSYNC_INCLUDE ?= $(LOCAL_SUBDIR)/ $(COLAB_SUBDIR)/ *.ipynb *.zip *.html
 #: Relative to $(DESTDIR_TP): symlinked there as `data` and deployed with the
 #: notebooks. Empty means the course ships no data directory.
 RSYNC_DATA ?=
@@ -641,13 +663,17 @@ GIT_PUBLISH_ENV_FILES := $(if $(GIT_PUBLISH_WITH_ENV),\
 	$(BUNDLE_PYPROJECT) $(BUNDLE_LOCK) $(GIT_PUBLISH_README) $(BUNDLE_EXTRA))
 GIT_PUBLISH_SOLUTION_FILES := $(if $(GIT_PUBLISH_SOLUTION_REL),$(SOLUTION_LOCAL) $(SOLUTION_COLAB))
 GIT_PUBLISH_SOLUTION_STAGE := $(GIT_PUBLISH_STAGE)/$(GIT_PUBLISH_SOLUTION_REL)
+# The hand-out page, when the course has one: the published tree mirrors
+# $(DESTDIR_TP), and its Colab links are the absolute ones built from
+# $(GIT_PUBLISH_URL), so it is the same page here as on the server.
+GIT_PUBLISH_INDEX := $(if $(strip $(INDEX_TITLE)),$(INDEX_HTML))
 
 .PHONY: publish-git publish-git-push
 # The notebooks are named one by one, never a directory: the `data` symlink
 # `make rsync` leaves in $(DESTDIR_TP), and any .ipynb_checkpoints/, then have
 # no way into the published repository.
 publish-git: $(STUDENT_LOCAL) $(STUDENT_COLAB) $(GIT_PUBLISH_SOLUTION_FILES) \
-		$(GIT_PUBLISH_ENV_FILES) $(GIT_PUBLISH_EXTRA)
+		$(GIT_PUBLISH_ENV_FILES) $(GIT_PUBLISH_EXTRA) $(GIT_PUBLISH_INDEX)
 	@rm -rf $(GIT_PUBLISH_STAGE)
 	@mkdir -p $(GIT_PUBLISH_STAGE)/$(LOCAL_SUBDIR) $(GIT_PUBLISH_STAGE)/$(COLAB_SUBDIR)
 	@cp $(STUDENT_LOCAL) $(GIT_PUBLISH_STAGE)/$(LOCAL_SUBDIR)/
@@ -660,6 +686,7 @@ publish-git: $(STUDENT_LOCAL) $(STUDENT_COLAB) $(GIT_PUBLISH_SOLUTION_FILES) \
 	$(if $(GIT_PUBLISH_WITH_ENV),@cp $(GIT_PUBLISH_README) $(GIT_PUBLISH_STAGE)/README.md)
 	$(if $(GIT_PUBLISH_WITH_ENV),$(if $(BUNDLE_EXTRA),@cp $(BUNDLE_EXTRA) $(GIT_PUBLISH_STAGE)/))
 	$(if $(GIT_PUBLISH_EXTRA),@cp $(GIT_PUBLISH_EXTRA) $(GIT_PUBLISH_STAGE)/)
+	$(if $(GIT_PUBLISH_INDEX),@cp $(GIT_PUBLISH_INDEX) $(GIT_PUBLISH_STAGE)/)
 	@set -e; \
 	dir="$(GIT_PUBLISH_DIR)"; branch="$(GIT_PUBLISH_BRANCH)"; \
 	if [ ! -d "$$dir/.git" ]; then \
@@ -728,8 +755,11 @@ MANIFEST_LOCAL_LABEL  ?= Notebook
 MANIFEST_COLAB_LABEL  ?= Colab
 MANIFEST_SOLUTION_LABEL       ?= Solution
 MANIFEST_SOLUTION_COLAB_LABEL ?= Solution (Colab)
-# Header key (under jupyter.metadata) holding a practical's display name.
-MANIFEST_NAME_KEY     ?= practical_name
+# Header keys (under jupyter.metadata) holding a practical's display name and
+# its one-line description. A source without them keeps its file name and has
+# no description.
+MANIFEST_NAME_KEY        ?= practical_name
+MANIFEST_DESCRIPTION_KEY ?= practical_description
 
 # The Colab entries get an absolute URL — opening the notebook in Colab rather
 # than downloading it — as soon as the course publishes to a public GitHub
@@ -752,6 +782,18 @@ MANIFEST_SOLUTION_ARGS = --solution-subdir "$(SOLUTION_REL_DIR)" \
 	--solution-label "$(MANIFEST_SOLUTION_LABEL)" \
 	--solution-colab-label "$(MANIFEST_SOLUTION_COLAB_LABEL)"
 
+# What describes the practicals, whoever the reader is. `manifest` adds the
+# base URL of its own reader; `index` (below) writes the same list for a reader
+# sitting in $(DESTDIR_TP) itself, so it adds nothing.
+MANIFEST_COMMON_ARGS = --sources $(SOURCES_DIR) --local-subdir "$(LOCAL_SUBDIR)" \
+	--colab-subdir "$(COLAB_SUBDIR)" --name-key "$(MANIFEST_NAME_KEY)" \
+	--description-key "$(MANIFEST_DESCRIPTION_KEY)" \
+	--local-label "$(MANIFEST_LOCAL_LABEL)" \
+	--colab-label "$(MANIFEST_COLAB_LABEL)" \
+	$(MANIFEST_COLAB_GIT_ARGS) \
+	$(MANIFEST_BUNDLE_ARGS) \
+	$(if $(SOLUTIONS_PUBLISHED),$(if $(SOLUTION_REL_DIR),$(MANIFEST_SOLUTION_ARGS)))
+
 .PHONY: manifest
 manifest:
 	@test -n "$(MANIFEST)" || { \
@@ -759,17 +801,57 @@ manifest:
 		echo "       make manifest MANIFEST=../slides/practicals.json"; \
 		exit 1; }
 	@$(PYTHON) python -m jupytext_notebook_helper.manifest \
-		--sources $(SOURCES_DIR) --local-subdir "$(LOCAL_SUBDIR)" \
-		--colab-subdir "$(COLAB_SUBDIR)" \
-		--output $(MANIFEST) --name-key "$(MANIFEST_NAME_KEY)" \
-		--local-label "$(MANIFEST_LOCAL_LABEL)" \
-		--colab-label "$(MANIFEST_COLAB_LABEL)" \
-		$(MANIFEST_COLAB_GIT_ARGS) \
-		$(MANIFEST_BUNDLE_ARGS) \
-		$(if $(SOLUTIONS_PUBLISHED),$(if $(SOLUTION_REL_DIR),$(MANIFEST_SOLUTION_ARGS))) \
+		$(MANIFEST_COMMON_ARGS) --output $(MANIFEST) \
 		$(if $(MANIFEST_BASE_URL),--base-url "$(MANIFEST_BASE_URL)") \
 		$(if $(MANIFEST_RELATIVE_TO),--deploy-path "$(if $(strip $(SSH_HOST)),$(strip $(SSH_HOST)):)$(SSH_PATH)" \
 			--relative-to "$(MANIFEST_RELATIVE_TO)")
+
+# ---- index.html: the page that hands the practicals out -------------------
+# A directory listing is not a hand-out — it shows every .ipynb, the zip and
+# the variant directories in server order, with no word on what to open first.
+# Setting INDEX_TITLE turns on an index page written at the root of
+# $(DESTDIR_TP), from the same description `manifest` writes: the archives to
+# download, then one row per practical (name, description, one link per
+# variant). It is then built by `student`, deployed by `rsync` and mirrored by
+# `publish-git` like everything else there.
+#
+#     INDEX_TITLE := Reinforcement learning — practicals
+#     INDEX_INTRO := sources/index-intro.html   # a fragment, inserted verbatim
+#
+INDEX_ZIPS := $(ZIP) $(if $(SOLUTIONS_PUBLISHED),$(SOLUTION_ZIP))
+# Held in a variable rather than written inline: a `$(if ...)` argument is cut
+# at its first comma, and a label may well have one.
+INDEX_LABEL_ARGS := \
+	$(if $(INDEX_STUDENT_LABEL),--bundle-label "student=$(INDEX_STUDENT_LABEL)") \
+	$(if $(INDEX_SOLUTION_LABEL),--bundle-label "solution=$(INDEX_SOLUTION_LABEL)")
+
+.PHONY: index
+index: $(INDEX_HTML)
+
+# The page is part of what a course hands out, so `student` builds it — and
+# only when the course asked for one.
+ifneq ($(strip $(INDEX_TITLE)),)
+student: $(INDEX_HTML)
+endif
+
+# Rebuilt when a source header changes (the names and descriptions), when the
+# introduction does, or when an archive does (its size is on the page). The
+# page itself is only rewritten when its bytes change, so an unchanged course
+# leaves the file — and everything keyed off its timestamp — alone.
+$(INDEX_HTML): $(PY_NOTEBOOKS) $(INDEX_INTRO) $(INDEX_ZIPS)
+	@test -n "$(INDEX_TITLE)" || { \
+		echo "ERROR: INDEX_TITLE is not set — name the page, e.g."; \
+		echo "       INDEX_TITLE := Reinforcement learning — practicals"; \
+		exit 1; }
+	@mkdir -p $(@D)
+	@$(PYTHON) python -m jupytext_notebook_helper.manifest \
+		$(MANIFEST_COMMON_ARGS) --output $(INDEX_MANIFEST) >/dev/null
+	@$(PYTHON) python -m jupytext_notebook_helper.index \
+		--manifest $(INDEX_MANIFEST) --output $@ \
+		--title "$(INDEX_TITLE)" --lang "$(INDEX_LANG)" \
+		$(if $(INDEX_INTRO),--intro "$(INDEX_INTRO)") \
+		$(if $(INDEX_FOOTER),--footer "$(INDEX_FOOTER)") \
+		$(INDEX_LABEL_ARGS)
 
 # ---- outline ----------------------------------------------------------
 # Per-notebook table of contents (headers + print_header() calls) with each
@@ -833,6 +915,9 @@ Build
                    + $(SOLUTION_ZIP))
   bundle           the uv-ready zip(s) only$(if $(BUNDLE_WITH_NOTEBOOKS),, (student: env only, no notebooks))
   all              student + teacher
+  index            the hand-out page at $(INDEX_HTML): the archives to
+                   download, then one row per practical with a link per
+                   variant. Built by 'student'$(if $(strip $(INDEX_TITLE)),, — set INDEX_TITLE to turn it on)
   manifest         JSON description of the practicals (ids, names, files, URL)
                    for whatever announces them — reads the headers only, builds
                    no notebook. Needs MANIFEST=<file>; MANIFEST_BASE_URL or
