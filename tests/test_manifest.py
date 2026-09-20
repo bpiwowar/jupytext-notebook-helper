@@ -149,3 +149,114 @@ def test_build_lists_bundles_and_solution_files(tmp_path):
 def test_parse_bundle_rejects_a_malformed_value(value):
     with pytest.raises(SystemExit):
         manifest.parse_bundle(value)
+
+
+@pytest.mark.parametrize(
+    "git_url",
+    [
+        "git@github.com:bpiwowar/course-lab.git",
+        "https://github.com/bpiwowar/course-lab.git",
+        "https://github.com/bpiwowar/course-lab",
+        "ssh://git@github.com/bpiwowar/course-lab.git",
+    ],
+)
+def test_github_colab_prefix_reads_every_spelling_of_the_remote(git_url):
+    assert manifest.github_colab_prefix(git_url, "main") == (
+        "https://colab.research.google.com/github/bpiwowar/course-lab/blob/main/"
+    )
+
+
+@pytest.mark.parametrize(
+    "git_url", ["git@git.isir.upmc.fr:bpiwowar/course.git", "/srv/git/course.git", ""]
+)
+def test_github_colab_prefix_is_none_elsewhere(git_url):
+    # Colab imports from GitHub, Drive or a gist — nothing else has a prefix.
+    assert manifest.github_colab_prefix(git_url, "main") is None
+
+
+def test_colab_entries_carry_an_absolute_url(tmp_path):
+    write(tmp_path, "tp1.py", "# %%\n")
+    built = manifest.build(
+        sources_dir=tmp_path,
+        local_subdir="local",
+        colab_subdir="colab",
+        local_label="Notebook",
+        colab_label="Colab",
+        name_key="practical_name",
+        url="../lab/",
+        solution_subdir="solution",
+        solution_label="Corrigé",
+        solution_colab_label="Corrigé (Colab)",
+        colab_url_prefix=manifest.github_colab_prefix(
+            "git@github.com:bpiwowar/course-lab.git", "main"
+        ),
+    )
+    files = built["practicals"][0]["files"]
+    prefix = "https://colab.research.google.com/github/bpiwowar/course-lab/blob/main/"
+    # the local variants stay relative to the base URL
+    assert "url" not in files[0] and "url" not in files[2]
+    assert files[1] == {
+        "label": "Colab",
+        "path": "colab/tp1.ipynb",
+        "url": prefix + "colab/tp1.ipynb",
+    }
+    assert files[3] == {
+        "label": "Corrigé (Colab)",
+        "path": "solution/colab/tp1.ipynb",
+        "url": prefix + "solution/colab/tp1.ipynb",
+        "solution": True,
+    }
+
+
+def test_no_prefix_leaves_the_entries_alone(tmp_path):
+    write(tmp_path, "tp1.py", "# %%\n")
+    built = manifest.build(
+        sources_dir=tmp_path,
+        local_subdir="local",
+        colab_subdir="colab",
+        local_label="Notebook",
+        colab_label="Colab",
+        name_key="practical_name",
+        url="../lab/",
+    )
+    assert all("url" not in f for f in built["practicals"][0]["files"])
+
+
+def test_main_warns_and_stays_relative_off_github(tmp_path, capsys):
+    write(tmp_path, "tp1.py", "# %%\n")
+    output = tmp_path / "practicals.json"
+    manifest.main(
+        [
+            "--sources",
+            str(tmp_path),
+            "--output",
+            str(output),
+            "--colab-git-url",
+            "git@git.isir.upmc.fr:bpiwowar/course.git",
+        ]
+    )
+    written = json.loads(output.read_text(encoding="utf-8"))
+    assert all("url" not in f for f in written["practicals"][0]["files"])
+    assert "not on GitHub" in capsys.readouterr().err
+
+
+def test_main_writes_the_colab_urls(tmp_path):
+    write(tmp_path, "tp1.py", "# %%\n")
+    output = tmp_path / "practicals.json"
+    manifest.main(
+        [
+            "--sources",
+            str(tmp_path),
+            "--output",
+            str(output),
+            "--colab-git-url",
+            "git@github.com:bpiwowar/course-lab.git",
+            "--colab-git-branch",
+            "trunk",
+        ]
+    )
+    written = json.loads(output.read_text(encoding="utf-8"))
+    assert written["practicals"][0]["files"][1]["url"] == (
+        "https://colab.research.google.com/github/bpiwowar/course-lab/blob/trunk/"
+        "colab/tp1.ipynb"
+    )

@@ -601,6 +601,16 @@ MANIFEST_SOLUTION_COLAB_LABEL ?= Solution (Colab)
 # Header key (under jupyter.metadata) holding a practical's display name.
 MANIFEST_NAME_KEY     ?= practical_name
 
+# The Colab entries get an absolute URL — opening the notebook in Colab rather
+# than downloading it — as soon as the course publishes to a public GitHub
+# repository ($(GIT_PUBLISH_URL), see `publish-git` above). Nothing to set here:
+# the paths line up because `publish-git` mirrors $(DESTDIR_TP), and a second
+# place to write the URL is a second place for it to go stale. A repository
+# elsewhere than GitHub leaves the entries relative, with a word on stderr —
+# Colab imports from GitHub, Drive or a gist only.
+MANIFEST_COLAB_GIT_ARGS = $(if $(strip $(GIT_PUBLISH_URL)),\
+	--colab-git-url "$(GIT_PUBLISH_URL)" --colab-git-branch "$(GIT_PUBLISH_BRANCH)")
+
 # The archives and, once PUBLISH_SOLUTIONS says so, the solutions: whatever of
 # them lives under $(DESTDIR_TP), so is served from the same base URL. Held in
 # variables rather than written inline: a `$(if ...)` argument is cut at its
@@ -624,6 +634,7 @@ manifest:
 		--output $(MANIFEST) --name-key "$(MANIFEST_NAME_KEY)" \
 		--local-label "$(MANIFEST_LOCAL_LABEL)" \
 		--colab-label "$(MANIFEST_COLAB_LABEL)" \
+		$(MANIFEST_COLAB_GIT_ARGS) \
 		$(MANIFEST_BUNDLE_ARGS) \
 		$(if $(SOLUTIONS_PUBLISHED),$(if $(SOLUTION_REL_DIR),$(MANIFEST_SOLUTION_ARGS))) \
 		$(if $(MANIFEST_BASE_URL),--base-url "$(MANIFEST_BASE_URL)") \
