@@ -103,7 +103,7 @@ def _course(tmp_path, names=("tp1", "tp2"), makefile_extra="", makefile_head="")
     return tmp_path
 
 
-def _make(cwd, *targets):
+def _make(cwd, *targets, check=True):
     bin_dir = cwd / ".shim"
     bin_dir.mkdir(exist_ok=True)
     shim = bin_dir / "python"
@@ -113,6 +113,10 @@ def _make(cwd, *targets):
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
     env["PYTHONPATH"] = ROOT + os.pathsep + env.get("PYTHONPATH", "")
+    # `publish-git` commits: give git an identity of its own rather than the
+    # machine's, which a CI runner does not have.
+    env["GIT_AUTHOR_NAME"] = env["GIT_COMMITTER_NAME"] = "tp.mk tests"
+    env["GIT_AUTHOR_EMAIL"] = env["GIT_COMMITTER_EMAIL"] = "tests@example.invalid"
     proc = subprocess.run(
         ["make", *targets],
         cwd=cwd,
@@ -120,7 +124,7 @@ def _make(cwd, *targets):
         capture_output=True,
         text=True,
     )
-    if proc.returncode != 0:
+    if check and proc.returncode != 0:
         raise AssertionError(
             f"make {' '.join(targets)} failed:\n{proc.stdout}\n{proc.stderr}"
         )
@@ -419,3 +423,149 @@ def test_manifest_lists_the_solutions_only_once_published(tmp_path):
         "path": "solution/local/tp1.ipynb",
         "solution": True,
     } in released["practicals"][0]["files"]
+
+
+# --------------------------------------------------------------------------
+# publish-git
+# --------------------------------------------------------------------------
+
+
+def _git(repo, *args):
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=True
+    ).stdout
+
+
+def _remote(tmp_path):
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--quiet", "--bare", str(remote)], check=True)
+    return remote
+
+
+def _publish(course, remote, *overrides):
+    return _make(
+        course,
+        "publish-git",
+        f"GIT_PUBLISH_URL={remote}",
+        "GIT_PUBLISH_ENV=no",
+        *overrides,
+    )
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not available")
+def test_publish_git_commits_the_student_tree_without_pushing(tmp_path):
+    course = _course(tmp_path, names=("tp1",))
+    remote = _remote(tmp_path)
+
+    out = _publish(course, remote)
+
+    clone = course / "outputs" / "git-publish"
+    assert (clone / "local" / "tp1.ipynb").exists()
+    assert (clone / "colab" / "tp1.ipynb").exists()
+    assert _git(clone, "log", "--oneline").count("\n") == 1
+    # the whole point of the split: nothing reached the remote (`show-ref`
+    # exits 1 when a repository has no reference at all)
+    bare = subprocess.run(
+        ["git", "-C", str(remote), "show-ref"], capture_output=True, text=True
+    )
+    assert bare.stdout == ""
+    assert "publish-git-push" in out.stdout
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not available")
+def test_publish_git_push_is_what_publishes(tmp_path):
+    course = _course(tmp_path, names=("tp1",))
+    remote = _remote(tmp_path)
+
+    _publish(course, remote)
+    _make(course, "publish-git-push", f"GIT_PUBLISH_URL={remote}")
+
+    assert _git(remote, "rev-parse", "main")
+    assert "tp1.ipynb" in _git(remote, "ls-tree", "-r", "--name-only", "main")
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not available")
+def test_publish_git_is_idempotent_and_follows_a_deleted_source(tmp_path):
+    course = _course(tmp_path, names=("tp1", "tp2"))
+    remote = _remote(tmp_path)
+    clone = course / "outputs" / "git-publish"
+
+    _publish(course, remote)
+    again = _publish(course, remote)
+    assert "nothing changed" in again.stdout
+    assert _git(clone, "log", "--oneline").count("\n") == 1
+
+    (course / "sources" / "tp2.py").unlink()
+    _make(course, "clean")
+    _publish(course, remote)
+    assert not (clone / "local" / "tp2.ipynb").exists()
+    assert not (clone / "colab" / "tp2.ipynb").exists()
+    assert (clone / "local" / "tp1.ipynb").exists()
+    assert _git(clone, "log", "--oneline").count("\n") == 2
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not available")
+def test_publish_git_leaves_the_repository_own_files_alone(tmp_path):
+    course = _course(tmp_path, names=("tp1",))
+    remote = _remote(tmp_path)
+    clone = course / "outputs" / "git-publish"
+
+    _publish(course, remote)
+    (clone / "LICENSE").write_text("CC-BY\n")
+    (clone / ".gitignore").write_text(".venv/\n")
+    _publish(course, remote)
+
+    assert (clone / "LICENSE").read_text() == "CC-BY\n"
+    assert (clone / ".gitignore").read_text() == ".venv/\n"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not available")
+def test_publish_git_ships_the_uv_environment_and_the_released_corrige(tmp_path):
+    course = _course(tmp_path, names=("tp1",), makefile_head=SOLUTION_MAKEFILE)
+    remote = _remote(tmp_path)
+    clone = course / "outputs" / "git-publish"
+
+    _make(course, "publish-git", f"GIT_PUBLISH_URL={remote}", "PUBLISH_SOLUTIONS=yes")
+
+    # a clone is a working uv project, not just a directory of notebooks
+    assert (clone / "pyproject.toml").exists()
+    assert (clone / "uv.lock").exists()
+    assert (clone / "README.md").read_text() == "# TP\n"
+    assert (clone / "solution" / "local" / "tp1.ipynb").exists()
+    assert (clone / "solution" / "colab" / "tp1.ipynb").exists()
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not available")
+def test_publish_git_holds_the_corrige_back_until_it_is_released(tmp_path):
+    course = _course(tmp_path, names=("tp1",), makefile_head=SOLUTION_MAKEFILE)
+    remote = _remote(tmp_path)
+
+    _make(course, "publish-git", f"GIT_PUBLISH_URL={remote}")
+
+    assert not (course / "outputs" / "git-publish" / "solution").exists()
+
+
+def test_publish_git_does_not_exist_without_a_repository(tmp_path):
+    course = _course(tmp_path, names=("tp1",))
+    failed = _make(course, "-n", "publish-git", check=False)
+    assert failed.returncode != 0
+    assert "publish-git" in failed.stderr
+
+
+def test_manifest_colab_entries_open_in_colab_when_published_on_github(tmp_path):
+    import json
+
+    course = _course(tmp_path, names=("tp1",))
+    _make(
+        course,
+        "manifest",
+        "MANIFEST=practicals.json",
+        "GIT_PUBLISH_URL=git@github.com:bpiwowar/course-lab.git",
+    )
+    written = json.loads((course / "practicals.json").read_text())
+    files = written["practicals"][0]["files"]
+    assert "url" not in files[0]
+    assert files[1]["url"] == (
+        "https://colab.research.google.com/github/bpiwowar/course-lab/blob/main/"
+        "colab/tp1.ipynb"
+    )

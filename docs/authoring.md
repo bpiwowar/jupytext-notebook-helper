@@ -165,3 +165,11 @@ It pins the imported packages (and any pulled in by inlined modules) from
 `uv.lock`, to the minor series (`==x.y.*`). You only need an explicit
 empty `pip`-tagged cell if you want the install cell somewhere other than the
 top. Non-Colab builds (no `--colab`) get no install cell.
+
+**A Colab notebook is one file, with no checkout around it.** Whether it is
+opened from Drive or from a public repository (`make publish-git`), nothing of
+the course tree is next to it: a source must reach everything it needs through
+the Hub or an absolute URL. `open("data/train.csv")`, `import resources`, a
+path to `../outputs/` — each works locally and fails in Colab, and the install
+cell cannot help. Writing under a relative path is fine: that is Colab's own
+`/content`.

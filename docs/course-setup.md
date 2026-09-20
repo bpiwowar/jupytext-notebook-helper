@@ -118,6 +118,9 @@ PUBLISH_SOLUTIONS := no                               # yes once released
   (`student`, and `solution` once released), and with `yes` adds each
   practical's solution notebooks to its `files`, flagged `"solution": true`
   and labelled `MANIFEST_SOLUTION_LABEL` / `MANIFEST_SOLUTION_COLAB_LABEL`.
+- `make publish-git`, below, keeps them out of the public repository in the
+  same way — with the difference that a git history is permanent: once pushed,
+  a corrigé stays in it even if a later run takes it off the tip.
 
 ## Deployment: `make rsync`
 
@@ -141,3 +144,66 @@ STUDENT_DATA_DIR      := student-data
 SSH_STUDENT_DATA      := ssh.example.org
 SSH_STUDENT_DATA_PATH := student-data/cache
 ```
+
+## Publishing to a public git repository: `make publish-git`
+
+An `.ipynb` served over HTTPS is a file to download. Two things it cannot be:
+
+- a notebook Google Colab opens — Colab imports from GitHub, from Drive or
+  from a gist, and from nowhere else;
+- something a student updates in place — a fixed typo means downloading the
+  zip again.
+
+Both follow from publishing the student tree to a public git repository.
+Setting `GIT_PUBLISH_URL` defines two targets:
+
+```makefile
+GIT_PUBLISH_URL := git@github.com:owner/mycourse-lab.git
+GIT_PUBLISH_DIR := outputs/git-publish     # the working clone; gitignore it
+```
+
+`make publish-git` builds the student notebooks, stages the tree and
+**commits** it in a clone of that repository. `make publish-git-push` pushes,
+and does nothing else. The split is the point: what reaches a public
+repository is what the students read, so the step that makes it public is one
+you take on purpose.
+
+```console
+$ make publish-git
+$ git -C outputs/git-publish show --stat     # read it
+$ make publish-git-push
+```
+
+The published tree mirrors `$(DESTDIR_TP)`:
+
+```
+README.md          $(GIT_PUBLISH_README), the bundle's README
+pyproject.toml     $(BUNDLE_PYPROJECT) — a clone is a uv project: `uv sync`
+uv.lock            $(BUNDLE_LOCK)
+<BUNDLE_EXTRA>     the files the zip carries at its root
+local/<name>.ipynb
+colab/<name>.ipynb
+solution/…         once PUBLISH_SOLUTIONS says yes
+```
+
+`GIT_PUBLISH_ENV := no` leaves the environment out, publishing the notebooks
+alone. `GIT_PUBLISH_EXTRA` adds files at the root.
+
+What the mirror does *not* touch is `GIT_PUBLISH_PRESERVE` (default `.git
+.gitignore .github LICENSE`): those belong to the published repository, not to
+this build. Everything else there is the build's — a practical that is renamed
+or deleted disappears from the repository on the next run.
+
+The clone is kept between runs and `clean` leaves it alone, since it may hold
+a commit that has not been pushed. For the same reason `publish-git` never
+resets it: it fast-forwards onto `origin` when it can, and says so when it
+cannot.
+
+This is also where the Colab links of `make manifest` come from. When
+`GIT_PUBLISH_URL` is a GitHub repository, each Colab entry of the manifest
+gains an absolute `url`
+(`https://colab.research.google.com/github/owner/repo/blob/main/colab/<id>.ipynb`)
+next to its `path`, and the page that announces the practicals links *that*.
+Nothing to configure: the paths line up because the published tree mirrors
+`$(DESTDIR_TP)`, and a URL written out a second time is a URL that goes stale.
+A repository elsewhere than GitHub keeps the entries relative and says why.

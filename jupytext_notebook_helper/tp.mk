@@ -34,6 +34,11 @@
 #                                       notebooks in place of the student ones
 #                                       (only when SOLUTION_ZIP is set)
 #
+# A course may also publish the student tree to a public git repository
+# (GIT_PUBLISH_URL, `make publish-git`): a student clones it and pulls the
+# updates, and — on GitHub — the Colab notebooks open in Colab from it, which
+# no .ipynb served over plain HTTPS can do.
+#
 # Releasing the solutions is a switch, PUBLISH_SOLUTIONS (default no): until it
 # says yes, `make rsync` keeps $(SOLUTION_ZIP) and $(SOLUTION_DIR) off the server
 # and `make manifest` does not list them. Both only concern files that live
@@ -374,7 +379,8 @@ lab-test: $(TEACHER_LOCAL)
 # $(TEACHER_DIR) and $(SOLUTION_DIR) go away wholesale, but $(DESTDIR_TP) is
 # only cleaned file by file (it is often a shared static/ directory), so the
 # old student notebooks would otherwise survive the upgrade and keep being
-# deployed.
+# deployed. $(GIT_PUBLISH_DIR) is deliberately absent: it is a git clone, and
+# may hold a commit that has not been pushed yet.
 clean:
 	@rm -rf $(TEACHER_DIR) $(SOLUTION_DIR) $(DEPDIR) $(TESTED_DIR) $(RESOLVED_DIR) \
 		$(BUNDLE_DIR) $(STUDENT_ENV_DIR) $(STUDENT_LOCAL) $(STUDENT_COLAB) \
@@ -574,6 +580,130 @@ rsync-data:
 		$(STUDENT_DATA_DIR)/ $(SSH_STUDENT_DATA):$(SSH_STUDENT_DATA_PATH)
 endif
 
+# ---- publish-git: the student tree in a public git repository -------------
+# Only defined when the course sets GIT_PUBLISH_URL. Two things a directory of
+# .ipynb files served over HTTPS cannot do: be opened in Google Colab — which
+# imports a notebook from GitHub, Drive or a gist, never from a URL of its own
+# choosing — and be updated in place by a student, `git pull` rather than one
+# more download of the zip.
+#
+# The published tree mirrors $(DESTDIR_TP): $(LOCAL_SUBDIR)/, $(COLAB_SUBDIR)/
+# and, once PUBLISH_SOLUTIONS says so, the corrigé; plus, unless
+# GIT_PUBLISH_ENV says no, the uv environment the bundle ships (pyproject.toml,
+# uv.lock, README.md, $(BUNDLE_EXTRA)) at its root, so that a clone is a working
+# project: `uv sync`. That mirroring is also what makes the Colab URLs of
+# `make manifest` correct, since they are built from GIT_PUBLISH_URL.
+#
+# `publish-git` stages and COMMITS; it never pushes. `publish-git-push` pushes,
+# and does nothing else — what reaches that repository is what the students
+# read, so making it public is a step of its own:
+#
+#     make publish-git
+#     git -C $(GIT_PUBLISH_DIR) show --stat      # read it
+#     make publish-git-push
+#
+# A git history keeps what it was given: a file published once stays in it even
+# after a later run removes it from the tip — worth a thought before turning
+# PUBLISH_SOLUTIONS on.
+GIT_PUBLISH_URL        ?=
+GIT_PUBLISH_BRANCH     ?= main
+#: The working clone, kept between runs — it may hold a commit that has not
+#: been pushed, so `clean` leaves it alone. Ignore it in the course's own
+#: repository.
+GIT_PUBLISH_DIR        ?= outputs/git-publish
+#: Where the tree is staged before being mirrored into the clone.
+GIT_PUBLISH_STAGE      ?= $(BUNDLE_DIR)/git-publish
+#: Ship the uv environment at the root of the repository (the bundle, unzipped).
+GIT_PUBLISH_ENV        ?= yes
+GIT_PUBLISH_README     ?= $(STUDENT_README)
+#: More files at the root of the published tree, under their own names.
+GIT_PUBLISH_EXTRA      ?=
+#: Paths the mirror never adds, changes or removes: they belong to the
+#: published repository itself, not to this build.
+GIT_PUBLISH_PRESERVE   ?= .git .gitignore .github LICENSE
+GIT_PUBLISH_CLONE_ARGS ?=
+#: Recursive (`=`, not `:=`): git then runs only when a publish happens, not on
+#: every make in every course.
+GIT_PUBLISH_SOURCE_REV  = $(shell git rev-parse --short HEAD 2>/dev/null)
+GIT_PUBLISH_MESSAGE    ?= $(if $(GIT_PUBLISH_SOURCE_REV),Update the practicals (source $(GIT_PUBLISH_SOURCE_REV)),Update the practicals)
+
+ifeq ($(filter $(GIT_PUBLISH_ENV),no No NO false False FALSE 0 off Off OFF),)
+GIT_PUBLISH_WITH_ENV := yes
+else
+GIT_PUBLISH_WITH_ENV :=
+endif
+# The corrigé travels only once it is released, like it does to the server.
+GIT_PUBLISH_SOLUTION_REL := $(if $(SOLUTIONS_PUBLISHED),$(SOLUTION_REL_DIR))
+GIT_PUBLISH_EXCLUDES := $(foreach p,$(GIT_PUBLISH_PRESERVE),--exclude "/$(p)")
+
+ifneq ($(strip $(GIT_PUBLISH_URL)),)
+GIT_PUBLISH_ENV_FILES := $(if $(GIT_PUBLISH_WITH_ENV),\
+	$(BUNDLE_PYPROJECT) $(BUNDLE_LOCK) $(GIT_PUBLISH_README) $(BUNDLE_EXTRA))
+GIT_PUBLISH_SOLUTION_FILES := $(if $(GIT_PUBLISH_SOLUTION_REL),$(SOLUTION_LOCAL) $(SOLUTION_COLAB))
+GIT_PUBLISH_SOLUTION_STAGE := $(GIT_PUBLISH_STAGE)/$(GIT_PUBLISH_SOLUTION_REL)
+
+.PHONY: publish-git publish-git-push
+# The notebooks are named one by one, never a directory: the `data` symlink
+# `make rsync` leaves in $(DESTDIR_TP), and any .ipynb_checkpoints/, then have
+# no way into the published repository.
+publish-git: $(STUDENT_LOCAL) $(STUDENT_COLAB) $(GIT_PUBLISH_SOLUTION_FILES) \
+		$(GIT_PUBLISH_ENV_FILES) $(GIT_PUBLISH_EXTRA)
+	@rm -rf $(GIT_PUBLISH_STAGE)
+	@mkdir -p $(GIT_PUBLISH_STAGE)/$(LOCAL_SUBDIR) $(GIT_PUBLISH_STAGE)/$(COLAB_SUBDIR)
+	@cp $(STUDENT_LOCAL) $(GIT_PUBLISH_STAGE)/$(LOCAL_SUBDIR)/
+	@cp $(STUDENT_COLAB) $(GIT_PUBLISH_STAGE)/$(COLAB_SUBDIR)/
+	$(if $(GIT_PUBLISH_SOLUTION_REL),@mkdir -p $(GIT_PUBLISH_SOLUTION_STAGE)/$(LOCAL_SUBDIR) $(GIT_PUBLISH_SOLUTION_STAGE)/$(COLAB_SUBDIR))
+	$(if $(GIT_PUBLISH_SOLUTION_REL),@cp $(SOLUTION_LOCAL) $(GIT_PUBLISH_SOLUTION_STAGE)/$(LOCAL_SUBDIR)/)
+	$(if $(GIT_PUBLISH_SOLUTION_REL),@cp $(SOLUTION_COLAB) $(GIT_PUBLISH_SOLUTION_STAGE)/$(COLAB_SUBDIR)/)
+	$(if $(GIT_PUBLISH_WITH_ENV),@cp $(BUNDLE_PYPROJECT) $(GIT_PUBLISH_STAGE)/pyproject.toml)
+	$(if $(GIT_PUBLISH_WITH_ENV),@cp $(BUNDLE_LOCK) $(GIT_PUBLISH_STAGE)/uv.lock)
+	$(if $(GIT_PUBLISH_WITH_ENV),@cp $(GIT_PUBLISH_README) $(GIT_PUBLISH_STAGE)/README.md)
+	$(if $(GIT_PUBLISH_WITH_ENV),$(if $(BUNDLE_EXTRA),@cp $(BUNDLE_EXTRA) $(GIT_PUBLISH_STAGE)/))
+	$(if $(GIT_PUBLISH_EXTRA),@cp $(GIT_PUBLISH_EXTRA) $(GIT_PUBLISH_STAGE)/)
+	@set -e; \
+	dir="$(GIT_PUBLISH_DIR)"; branch="$(GIT_PUBLISH_BRANCH)"; \
+	if [ ! -d "$$dir/.git" ]; then \
+		echo "=== Cloning $(GIT_PUBLISH_URL) into $$dir ==="; \
+		git clone $(GIT_PUBLISH_CLONE_ARGS) "$(GIT_PUBLISH_URL)" "$$dir"; \
+	fi; \
+	git -C "$$dir" remote set-url origin "$(GIT_PUBLISH_URL)"; \
+	git -C "$$dir" fetch --quiet origin; \
+	if git -C "$$dir" show-ref --verify --quiet "refs/heads/$$branch"; then \
+		git -C "$$dir" checkout --quiet "$$branch"; \
+		if git -C "$$dir" show-ref --verify --quiet "refs/remotes/origin/$$branch"; then \
+			git -C "$$dir" merge --ff-only --quiet "origin/$$branch" || \
+				echo "publish-git: $$dir is ahead of origin/$$branch — left as it is"; \
+		fi; \
+	elif git -C "$$dir" show-ref --verify --quiet "refs/remotes/origin/$$branch"; then \
+		git -C "$$dir" checkout --quiet -b "$$branch" "origin/$$branch"; \
+	else \
+		git -C "$$dir" symbolic-ref HEAD "refs/heads/$$branch"; \
+	fi; \
+	rsync -a --delete $(GIT_PUBLISH_EXCLUDES) "$(GIT_PUBLISH_STAGE)/" "$$dir/"; \
+	git -C "$$dir" add -A; \
+	if git -C "$$dir" diff --cached --quiet; then \
+		echo "publish-git: nothing changed"; \
+	else \
+		git -C "$$dir" commit -q -m "$(GIT_PUBLISH_MESSAGE)"; \
+		git -C "$$dir" --no-pager log --oneline -1; \
+	fi; \
+	if git -C "$$dir" show-ref --verify --quiet "refs/remotes/origin/$$branch"; then \
+		ahead=$$(git -C "$$dir" rev-list --count "origin/$$branch..$$branch"); \
+	else \
+		ahead=$$(git -C "$$dir" rev-list --count "$$branch" 2>/dev/null || echo 0); \
+	fi; \
+	if [ "$$ahead" -gt 0 ]; then \
+		echo "publish-git: $$ahead commit(s) waiting — read them with 'git -C $$dir show --stat', publish with 'make publish-git-push'"; \
+	fi
+	@rm -rf $(GIT_PUBLISH_STAGE)
+
+publish-git-push:
+	@test -d $(GIT_PUBLISH_DIR)/.git || { \
+		echo "ERROR: no clone at $(GIT_PUBLISH_DIR) — run 'make publish-git' first"; \
+		exit 1; }
+	git -C $(GIT_PUBLISH_DIR) push origin $(GIT_PUBLISH_BRANCH)
+endif
+
 # ---- practicals manifest --------------------------------------------------
 # A JSON description of the practicals — id, display name, the files each one
 # produces and the URL they are served from — for whatever announces them: a
@@ -686,6 +816,13 @@ define HELP_RSYNC_DATA
   rsync-data       deploy $(STUDENT_DATA_DIR)/ to $(SSH_STUDENT_DATA)
 endef
 
+define HELP_PUBLISH_GIT
+  publish-git      mirror $(DESTDIR_TP)/ into a clone of $(GIT_PUBLISH_URL)
+                   ($(GIT_PUBLISH_DIR)) and commit — it never pushes
+                   (solutions too with PUBLISH_SOLUTIONS=yes, now: $(PUBLISH_SOLUTIONS))
+  publish-git-push push $(GIT_PUBLISH_BRANCH) there, and nothing else
+endef
+
 define HELP_TEXT
 
 Build
@@ -741,11 +878,12 @@ Run the teacher notebooks (execute them, keep the result)
 Edit
   lab              JupyterLab on the teacher notebooks (built first)
   lab-test         same, at profile $(LAB_PROFILE): reduced datasets and training,
-                   figures still shown$(if $(or $(SSH_HOST),$(SSH_STUDENT_DATA)),
+                   figures still shown$(if $(or $(SSH_HOST),$(SSH_STUDENT_DATA),$(GIT_PUBLISH_URL)),
 
 Deploy)$(if $(SSH_HOST),
 $(HELP_RSYNC))$(if $(SSH_STUDENT_DATA),
-$(HELP_RSYNC_DATA))
+$(HELP_RSYNC_DATA))$(if $(GIT_PUBLISH_URL),
+$(HELP_PUBLISH_GIT))
 endef
 export HELP_TEXT
 

@@ -16,8 +16,11 @@ them in order and names the target for each.
  student/tp-uv.zip, tp-uv-solution.zip   uv bundles (pyproject + uv.lock + notebooks)
       │  make check / run-teacher              does it run?
       │  make rsync                            DESTDIR_TP → SSH_HOST:SSH_PATH
+      │  make publish-git                      DESTDIR_TP → a public git repo
       ▼
  $(SSH_PATH) on the server               what students download
+ github.com/owner/repo                   what students clone, and what Colab
+      │                                        opens the colab/ notebooks from
       │  make manifest                         reads the headers only
       ▼
  practicals.json                         read by whatever announces the TP
@@ -82,6 +85,14 @@ The solutions are controlled by one switch, `PUBLISH_SOLUTIONS`:
   deletes any copy already on the server.
 - `yes`: `rsync` builds `solution` first and uploads it.
 
+## 4b. Publish to a public git repository
+
+`make publish-git` mirrors the same tree into a clone of `GIT_PUBLISH_URL` and
+commits it; `make publish-git-push` pushes. Two things the server cannot give:
+a notebook Google Colab opens (it imports from GitHub, Drive or a gist only)
+and one a student updates with `git pull`. `PUBLISH_SOLUTIONS` applies here
+too — remembering that a git history keeps what it was once given.
+
 ## 5. Announce
 
 `make manifest MANIFEST=<file>` writes a JSON description of the practicals:
@@ -94,6 +105,10 @@ with `MANIFEST_BASE_URL`, or have it derived from the two deploy paths with
 `MANIFEST_RELATIVE_TO=<host>:<path where the consumer is deployed>`. With
 `PUBLISH_SOLUTIONS=yes`, the manifest also lists the solution zip and each
 practical's solution notebooks, flagged `"solution": true`.
+
+When the course publishes to GitHub (step 4b), each Colab entry also carries an
+absolute `url` into Colab, derived from `GIT_PUBLISH_URL`; the announcing page
+uses it instead of `baseUrl + path`.
 
 On the slide-app side, `make practical-manifest` calls this target, and
 `practical.bundles` in `webpack.config.js` gives the wording of each zip (see
