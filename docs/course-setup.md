@@ -162,13 +162,15 @@ INDEX_STUDENT_LABEL  := Everything, as a uv project
 INDEX_SOLUTION_LABEL := The corrigés
 ```
 
-`make student` builds it, `rsync` deploys it and `publish-git` mirrors it. It
+`make index` writes it, and `rsync` and `publish-git` — the targets that
+publish it — build it first; `make student` does not, so building the notebooks
+does not touch the page. Add `student: index` to the course's `Makefile` to
+have it rebuilt with every build. It
 is written from the same description `make manifest` produces — names and
 descriptions from the source headers (`practical_name`,
 `practical_description`), Colab links absolute when `GIT_PUBLISH_URL` is a
 GitHub repository, corrigés listed only once `PUBLISH_SOLUTIONS` says yes — so
-the page cannot list something the deployment does not carry. `make index`
-builds it alone.
+the page cannot list something the deployment does not carry.
 
 The page is one self-contained file: inline CSS (light and dark), no script,
 no font to fetch, and nothing dated in it, so a build that changes nothing

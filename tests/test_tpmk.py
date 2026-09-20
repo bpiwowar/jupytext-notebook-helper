@@ -481,15 +481,32 @@ def test_index_lists_the_practicals_their_files_and_the_archive(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("zip") is None, reason="zip is not available")
-def test_student_builds_the_index_only_when_the_course_asked_for_one(tmp_path):
+def test_student_leaves_the_index_alone(tmp_path):
+    """Building the notebooks is not handing them out: only `index` writes it."""
     course = _indexed_course(tmp_path)
+    _make(course, "student")
+    assert not (course / "student" / "index.html").exists()
+
+    _make(course, "index")
+    assert (course / "student" / "index.html").exists()
+
+
+@pytest.mark.skipif(shutil.which("zip") is None, reason="zip is not available")
+def test_a_course_can_ask_student_to_build_it(tmp_path):
+    course = _indexed_course(tmp_path, makefile_extra="student: index\n")
     _make(course, "student")
     assert (course / "student" / "index.html").exists()
 
+
+def test_rsync_builds_the_page_it_deploys(tmp_path):
+    course = _course(tmp_path, names=("tp1",), makefile_head=INDEX_MAKEFILE)
+    out = _make(course, "-n", "rsync", "SSH_HOST=h", "SSH_PATH=/p")
+    assert "jupytext_notebook_helper.index" in out.stdout
+
     (tmp_path / "plain").mkdir()
     plain = _course(tmp_path / "plain", names=("tp1",), makefile_head=BUNDLE_MAKEFILE)
-    _make(plain, "student")
-    assert not (plain / "student" / "index.html").exists()
+    out = _make(plain, "-n", "rsync", "SSH_HOST=h", "SSH_PATH=/p")
+    assert "jupytext_notebook_helper.index" not in out.stdout
 
 
 @pytest.mark.skipif(shutil.which("zip") is None, reason="zip is not available")

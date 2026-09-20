@@ -570,6 +570,9 @@ SSH_STUDENT_DATA ?=
 SSH_STUDENT_DATA_PATH ?=
 
 RSYNC_DATA_LINK := $(if $(RSYNC_DATA),$(DESTDIR_TP)/data)
+# The hand-out page, when the course has one: `rsync` deploys $(DESTDIR_TP),
+# so it is what builds it — `student` leaves it alone.
+RSYNC_INDEX := $(if $(strip $(INDEX_TITLE)),$(INDEX_HTML))
 # The solutions under $(DESTDIR_TP), as rsync patterns anchored at its root.
 # They come first — rsync stops at the first matching rule — as includes once
 # released, as excludes before: a broad RSYNC_INCLUDE (`*.zip`, `*.ipynb`) would
@@ -588,7 +591,7 @@ ifneq ($(strip $(SSH_HOST)),)
 $(RSYNC_DATA_LINK):
 	ln -sf $(RSYNC_DATA) $@
 
-rsync: student $(if $(SOLUTIONS_PUBLISHED),solution) $(RSYNC_DATA_LINK)
+rsync: student $(if $(SOLUTIONS_PUBLISHED),solution) $(RSYNC_DATA_LINK) $(RSYNC_INDEX)
 	@echo "=== Synchronizing student notebooks$(if $(SOLUTIONS_PUBLISHED), and solutions) on $(SSH_HOST) ==="
 	@ssh $(SSH_HOST) mkdir -p $(SSH_PATH)
 	rsync --copy-unsafe-links -azv $(RSYNC_ARGS) --exclude "*" --delete-excluded \
@@ -812,8 +815,14 @@ manifest:
 # Setting INDEX_TITLE turns on an index page written at the root of
 # $(DESTDIR_TP), from the same description `manifest` writes: the archives to
 # download, then one row per practical (name, description, one link per
-# variant). It is then built by `student`, deployed by `rsync` and mirrored by
-# `publish-git` like everything else there.
+# variant).
+#
+# `make index` builds it, and so do the two targets that publish it, `rsync`
+# and `publish-git`. `student` does NOT: the page is about handing the
+# notebooks out, not about building them, and a course that wants it on every
+# build says so in one line:
+#
+#     student: index
 #
 #     INDEX_TITLE := Reinforcement learning — practicals
 #     INDEX_INTRO := sources/index-intro.html   # a fragment, inserted verbatim
@@ -827,12 +836,6 @@ INDEX_LABEL_ARGS := \
 
 .PHONY: index
 index: $(INDEX_HTML)
-
-# The page is part of what a course hands out, so `student` builds it — and
-# only when the course asked for one.
-ifneq ($(strip $(INDEX_TITLE)),)
-student: $(INDEX_HTML)
-endif
 
 # Rebuilt when a source header changes (the names and descriptions), when the
 # introduction does, or when an archive does (its size is on the page). The
@@ -917,7 +920,8 @@ Build
   all              student + teacher
   index            the hand-out page at $(INDEX_HTML): the archives to
                    download, then one row per practical with a link per
-                   variant. Built by 'student'$(if $(strip $(INDEX_TITLE)),, — set INDEX_TITLE to turn it on)
+                   variant.$(if $(strip $(INDEX_TITLE)), Built by 'rsync' and 'publish-git'; not by
+                   'student' — add 'student: index' to build it there too., Set INDEX_TITLE to turn it on.)
   manifest         JSON description of the practicals (ids, names, files, URL)
                    for whatever announces them — reads the headers only, builds
                    no notebook. Needs MANIFEST=<file>; MANIFEST_BASE_URL or

@@ -59,7 +59,7 @@ In the cells, `[[student]] … [[/student]]` marks what students must write,
 | `teacher`  | `$(TEACHER_DIR)/{local,colab}/<name>.ipynb` |
 | `solution` | `$(SOLUTION_DIR)/{local,colab}/<name>.ipynb`, `$(SOLUTION_ZIP)` |
 | `bundle`   | the zips only |
-| `index`    | `$(INDEX_HTML)`, the hand-out page — only with `INDEX_TITLE` |
+| `index`    | `$(INDEX_HTML)`, the hand-out page — only with `INDEX_TITLE`; `student` does not build it |
 
 The filter derives each variant from the same source. It gathers imports into a
 single cell, inlines the course library functions a notebook uses, and adds a
@@ -106,9 +106,16 @@ A directory of `.ipynb` files is not a hand-out: a student landing on
 `$(SSH_PATH)` sees every notebook, the zip and the variant directories in
 whatever order the server lists them. Setting `INDEX_TITLE` adds
 `$(DESTDIR_TP)/index.html` — the archives to download first, then one row per
-practical with its description and a link per variant — built by `make
-student`, deployed by `rsync` and mirrored by `publish-git` with everything
-else there.
+practical with its description and a link per variant.
+
+`make index` writes it, and so do the two targets that publish it, `rsync` and
+`publish-git`. `make student` does not: building the notebooks and handing them
+out are separate steps. A course that wants the page rebuilt with every build
+says so in one line of its `Makefile`:
+
+```makefile
+student: index
+```
 
 ```makefile
 INDEX_TITLE  := Reinforcement learning — practicals
