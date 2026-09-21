@@ -80,3 +80,26 @@ moving from one to the other.
   - `make clean` once, then rebuild: `clean` removes the notebooks left at
     the old paths, and `rsync --delete-excluded` takes them down from the
     server.
+
+## Hints dropped from the corrigé — shipped in v2.4.0
+
+- **Changes:** in `--solution` (*corrigé*) mode, hint lines inside a
+  `[[student]]` block (`##` / `# >`) are no longer un-commented and emitted
+  above the real body — they are dropped. Only the generated corrigé changes;
+  no API, and the student and teacher versions are untouched.
+
+  ```python
+  # source                          corrigé, before        corrigé, now
+  # [[student]]                     return ...             return q.argmax(1)
+  ## return ...                     return q.argmax(1)
+  return q.argmax(1)
+  # [[/student]]
+  ```
+- **Why:** a hint is scaffolding for the student notebook. Next to the answer
+  it duplicated a line at best, and at worst made the corrigé *not run* —
+  `return ...` before the real `return` returns `Ellipsis`, and `summ += ...`
+  raises `TypeError`. A corrigé that cannot be executed is not a corrigé.
+- **Migration recipe:** rebuild (`make solution`). A block whose only content
+  was hints — no solution line at all — now comes out empty, which is a syntax
+  error: give it a body, or leave it as a `[[student]]`-only exercise with no
+  corrigé line to show.

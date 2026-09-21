@@ -103,6 +103,38 @@ def test_assert_marker_kept_for_teacher_dropped_for_solution(tmp_path):
     assert "answer = 42" in solution
 
 
+HINTS_NB = textwrap.dedent(
+    """
+    # %%
+    def answer():
+        # [[student]] implement the answer
+        ## # think about the base case first
+        ## return ...
+        # >x = 0
+        return 42
+        # [[/student]]
+    """
+).lstrip()
+
+
+def test_hints_are_dropped_from_the_corrige(tmp_path):
+    """A hint is scaffolding for the student version: emitting it in the
+    corrigé duplicates the answer, or (`return ...`) breaks it."""
+    src = tmp_path / "sample.py"
+    src.write_text(HINTS_NB)
+    student = _text(_run([], src))
+    assert "return ..." in student  # student still gets the scaffolding
+    assert "x = 0" in student
+    assert "think about the base case first" in student
+
+    solution = _text(_run(["--solution"], src))
+    assert "return 42" in solution  # the real body is kept
+    assert "return ..." not in solution  # ... but not the hint above it
+    assert "x = 0" not in solution
+    assert "think about the base case first" not in solution
+    assert "##" not in solution and "# >" not in solution  # no marker leaks
+
+
 # --------------------------------------------------------------------------- #
 # Automatic import gathering + internal inlining
 # --------------------------------------------------------------------------- #

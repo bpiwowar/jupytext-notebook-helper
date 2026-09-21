@@ -743,7 +743,12 @@ def process(  # noqa: C901
                     unindent = 0
 
                 elif hide and (not teacher_mode) and re_hint.match(line) is not None:
-                    lines.append(re_hint.sub(r"\1\2", line[unindent:]))
+                    # A hint is scaffolding for the student version only: the
+                    # corrigé keeps the real body just below, and emitting the
+                    # hint there would duplicate (`q = ...` then `q = f(...)`)
+                    # or break it (`return ...` before the real `return`).
+                    if not solution_mode:
+                        lines.append(re_hint.sub(r"\1\2", line[unindent:]))
 
                 elif (
                     not (hide or remove)
