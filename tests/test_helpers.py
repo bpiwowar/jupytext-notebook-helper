@@ -5,7 +5,7 @@ import jupytext_notebook_helper as h
 
 def test_public_api():
     assert callable(h.print_header)
-    assert callable(h.is_notebook)
+    assert h.OutputMode is not None
 
 
 def test_star_import_surface():
@@ -23,5 +23,9 @@ def test_print_header(capsys):
     assert "=" * 10 in out
 
 
-def test_is_notebook_false_under_pytest():
-    assert h.is_notebook() is False
+def test_importing_this_package_tells_hardware_about_figures():
+    """The profile note gains an `images:` part, which is this side's to say."""
+    import cs_lab.machine as machine
+
+    assert h._figure_state in machine._state_notes
+    assert h._figure_state().startswith("images: ")

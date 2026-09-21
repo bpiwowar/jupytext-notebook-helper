@@ -48,6 +48,11 @@ The solution notebooks (``--solution-subdir``) are listed only when given —
 that is how a course keeps its corrigé unannounced until it is released — and
 each such file carries ``"solution": true``.
 
+Which practicals are listed at all, and which of them list a corrigé, is read
+from the sources' own headers (see :mod:`jupytext_notebook_helper.selection`):
+a practical whose header says ``publish: no`` has no entry here, and one
+saying ``solution: no`` has no corrigé among its files.
+
 The display name is the ``practical_name`` key of the source's percent-format
 header, and ``practical_description`` a one-line summary the reader may show
 next to it::
@@ -76,65 +81,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import yaml
+from jupytext_notebook_helper import selection
+from jupytext_notebook_helper.header import (  # noqa: F401  (part of this module's API)
+    display_name,
+    metadata_value,
+    read_header,
+)
 
 # A `host:` prefix on a deployment path (rsync's own syntax). A Windows drive
 # letter is not a concern here: these are remote paths.
 _HOST_PREFIX = re.compile(r"^(?P<host>[^/:]+):(?P<path>/.*)$")
-
-
-def read_header(source: Path) -> dict[str, Any]:
-    """The percent-format YAML header of a jupytext source, as a dict.
-
-    Only the header is read — the comment block between the first two ``# ---``
-    lines — so the cost does not grow with the notebook.
-    """
-    lines: list[str] = []
-    started = False
-    with source.open(encoding="utf-8") as handle:
-        for line in handle:
-            stripped = line.rstrip("\n")
-            if stripped == "# ---":
-                if started:
-                    break
-                started = True
-                continue
-            if not started:
-                # Anything before the header means there is none.
-                if stripped.strip():
-                    return {}
-                continue
-            if not stripped.startswith("#"):
-                return {}
-            lines.append(stripped[2:] if stripped.startswith("# ") else stripped[1:])
-    if not lines:
-        return {}
-    try:
-        header = yaml.safe_load("\n".join(lines))
-    except yaml.YAMLError:
-        return {}
-    return header if isinstance(header, dict) else {}
-
-
-def metadata_value(source: Path, key: str) -> str | None:
-    """A ``jupyter.metadata`` string of the header, stripped, or ``None``."""
-    header = read_header(source)
-    jupyter = header.get("jupyter") if isinstance(header, dict) else None
-    if isinstance(jupyter, dict):
-        metadata = jupyter.get("metadata")
-        if isinstance(metadata, dict):
-            value = metadata.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    return None
-
-
-def display_name(source: Path, name_key: str) -> str:
-    """The practical's title, from the header, or the file name title-cased."""
-    value = metadata_value(source, name_key)
-    if value is not None:
-        return value
-    return " ".join(word.capitalize() for word in source.stem.split("-"))
 
 
 def base_url(
@@ -220,10 +176,17 @@ def build(
     solution_subdir: str | None = None,
     solution_label: str = "Solution",
     solution_colab_label: str = "Solution (Colab)",
+    solutions_default: bool = True,
     colab_url_prefix: str | None = None,
 ) -> dict[str, Any]:
+    # Each source's own header says whether it is handed out, and whether its
+    # corrigé goes with it (see :mod:`jupytext_notebook_helper.selection`). A
+    # practical held back is absent from the manifest altogether: what is not
+    # announced is exactly what `rsync` does not deploy.
     practicals = []
-    for source in sorted(sources_dir.glob("*.py")):
+    for source in selection.sources(sources_dir):
+        if not selection.is_published(source):
+            continue
         stem = source.stem
         files: list[dict[str, Any]] = [
             {"label": local_label, "path": f"{local_subdir}/{stem}.ipynb"}
@@ -234,7 +197,9 @@ def build(
                     colab_label, f"{colab_subdir}/{stem}.ipynb", colab_url_prefix
                 )
             )
-        if solution_subdir:
+        if solution_subdir and selection.has_solution(
+            source, default=solutions_default
+        ):
             files.append(
                 {
                     "label": solution_label,
@@ -323,6 +288,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--solution-label", default="Solution")
     parser.add_argument("--solution-colab-label", default="Solution (Colab)")
     parser.add_argument(
+        "--solutions-default",
+        choices=("yes", "no"),
+        default="yes",
+        help="whether a source whose header says nothing about its corrigé "
+        "releases it (the course's PUBLISH_SOLUTIONS); a header always wins",
+    )
+    parser.add_argument(
         "--name-key",
         default="practical_name",
         help="header key holding the display name (under jupyter.metadata)",
@@ -385,6 +357,7 @@ def main(argv: list[str] | None = None) -> int:
         else None,
         solution_label=args.solution_label,
         solution_colab_label=args.solution_colab_label,
+        solutions_default=args.solutions_default == "yes",
         colab_url_prefix=colab_url_prefix,
         url=base_url(
             given=args.base_url,

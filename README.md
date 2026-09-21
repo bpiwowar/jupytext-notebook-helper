@@ -75,7 +75,7 @@ kernel, and the file on disk stays the plain `.py` source.
 
 ## What you get
 
-Beyond the variant generation, the runtime helpers and build integrate a few
+Beyond the variant generation, the build integrates a few
 things that otherwise bite you late:
 
 - **Imports are gathered automatically** from wherever you wrote them — put each
@@ -84,6 +84,10 @@ things that otherwise bite you late:
   carries exactly the helper functions it uses — nothing more.
 - **Colab gets a pinned `%pip install` cell** generated from `uv.lock`, so the
   first cell just works.
+- **Each practical says whether it is handed out**, and whether its corrigé
+  goes with it, in its own header (`publish:` / `solution:`) — so holding one
+  back is one line in the file it concerns, and it keeps being built and
+  checked meanwhile.
 - **Everything is testable** at three fidelity levels (`make check` = resolved
   inlined subset, `make check-raw` = plain script, and the real notebook build),
   catching missing
@@ -113,7 +117,7 @@ make check      # run every source, with the code students get
 |------|--------|
 | [The pipeline, end to end](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/pipeline.md) | source → build → check → deploy → index page → manifest, with the target for each step |
 | [Writing a source](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/authoring.md) | markers, gathered imports, inlined library code, the Colab install cell |
-| [Runtime helpers](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/runtime.md) | `hardware()`, profiles, where output goes |
+| [Runtime helpers](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/runtime.md) | where output goes (`NOTEBOOK_OUTPUT`), and what belongs to [cs-lab](https://github.com/bpiwowar/cs-lab) instead: `hardware()` and the profile ladder |
 | [Checking and running](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/testing.md) | `check`, `check-raw`, `lab`, `run-teacher`, `check-resources` |
 | [Setting up a course](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/course-setup.md) | the `Makefile`, `[tool.jupytext-notebook-helper]`, bundles, solutions, `rsync`, the index page |
 | [Breaking changes](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/breaking.md) | what changed between major versions, and how to migrate |

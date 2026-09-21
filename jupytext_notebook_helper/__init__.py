@@ -1,31 +1,32 @@
-"""Runtime helpers for jupytext-percent teaching notebooks.
+"""Runtime helpers for authoring jupytext-percent teaching notebooks.
 
-Two questions a notebook has to answer, kept apart:
+What this module offers is what an *author* needs while writing and checking a
+source, not what the notebook itself needs to run:
 
-``hardware()``
-    What this machine offers — device, dtype, and whether ``bitsandbytes`` or
-    ``vLLM`` actually work here. See ``jupytext_notebook_helper.machine``.
+``print_header``
+    A formatted header when the source runs as a script; the jupytext filter
+    turns the same call into a markdown header, so it never reaches a built
+    notebook.
 ``NOTEBOOK_OUTPUT``
     Where output goes: ``notebook`` (inline), ``console`` (imgcat + INFO
     logging, what ``make check`` wants) or ``off`` (no figures at all).
     Defaults to the context. See ``jupytext_notebook_helper.output``.
 
-A third question — *how much* compute to spend — belongs to neither: it is a
-``cached_hub.Profile`` ladder the course declares, selected with
-``NOTEBOOK_PROFILE``. Hand it to ``hardware()`` and the machine picks a sensible
-starting rung::
+The two questions the *notebook* asks — what this machine offers, and how much
+compute to spend on it — belong to `cs-lab <https://pypi.org/project/cs-lab/>`_,
+which a student installs and this package does not replace::
 
-    from jupytext_notebook_helper import hardware
+    from cs_lab import hardware
     from mycourse.profiles import Profile
 
     hw = hardware(Profile)
     MODEL = Profile.pick(fast_test="tiny/model", low_gpu="big/model")
     model = load_hf_model(MODEL, AutoModelForCausalLM, dtype=hw.dtype)
 
-Also provides ``print_header`` (a formatted header in scripts; the jupytext
-filter turns it into a markdown header in notebooks) and ``is_notebook``.
+Importing this module tells ``hardware()`` to mention figure visibility in the
+note it shows, since that is this side's decision to make.
 
-Usage in a notebook cell::
+Usage in a cell tagged ``teacher, not-colab``::
 
     from jupytext_notebook_helper import *
 """
@@ -33,12 +34,6 @@ Usage in a notebook cell::
 import io
 import logging
 
-from jupytext_notebook_helper.machine import (  # noqa: F401
-    ENV_BACKEND,
-    Hardware,
-    hardware,
-)
-from jupytext_notebook_helper.notebook import is_notebook  # noqa: F401
 from jupytext_notebook_helper.output import (  # noqa: F401
     ENV_OUTPUT,
     OutputMode,
@@ -50,15 +45,11 @@ from jupytext_notebook_helper.output import (  # noqa: F401
 )
 
 __all__ = [
-    # what the machine offers
-    "hardware",
-    "Hardware",
     # where output goes
     "OutputMode",
     "current_output_mode",
     "set_output_mode",
     "print_header",
-    "is_notebook",
 ]
 
 _output_mode = current_output_mode()
@@ -144,3 +135,21 @@ if _output_mode is not OutputMode.NOTEBOOK:
     _patch_matplotlib()
 
 mark_applied(_output_mode)
+
+
+def _figure_state() -> str:
+    """What to add to the note `cs_lab.hardware` shows in a notebook.
+
+    Figure visibility is decided here — it is a start-up decision, made by
+    ``NOTEBOOK_OUTPUT`` before anything imports pyplot — so the profile line
+    says it only when this package is present, i.e. in a teacher's notebook.
+    """
+    return f"images: {'shown' if current_output_mode().shows_figures else 'off'}"
+
+
+try:
+    from cs_lab import add_state_note
+
+    add_state_note(_figure_state)
+except ImportError:  # pragma: no cover - cs-lab is a declared dependency
+    pass

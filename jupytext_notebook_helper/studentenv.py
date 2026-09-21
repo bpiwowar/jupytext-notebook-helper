@@ -7,11 +7,11 @@ editable and instructor-only dependencies that break ``uv sync`` once unzipped
 somewhere else.
 
 Requirements are deduplicated by project name, and a constrained requirement
-wins over a bare one: a notebook importing ``cached_hub`` contributes
-``cached-hub``, while the course can pin a floor with
+wins over a bare one: a notebook importing ``cs_lab`` contributes
+``cs-lab``, while the course can pin a floor with
 
     [tool.jupytext-notebook-helper]
-    student-base-deps = ["cached-hub>=0.3.0"]
+    student-base-deps = ["cs-lab>=1.0"]
 
 and the generated project lists the floor alone. Without it, ``uv lock`` is
 free to keep whatever version it resolved first.
@@ -33,7 +33,7 @@ _SPECIFIER = re.compile(r"[\[<>=!~;@\s]")
 
 
 def _project_name(requirement: str) -> str:
-    """``cached-hub>=0.3.0`` -> ``cached-hub``, PEP 503 normalised."""
+    """``cs-lab>=1.0`` -> ``cs-lab``, PEP 503 normalised."""
     name = _SPECIFIER.split(requirement.strip(), 1)[0]
     return re.sub(r"[-_.]+", "-", name).lower()
 

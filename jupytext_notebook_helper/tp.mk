@@ -11,7 +11,7 @@
 #     [tool.jupytext-notebook-helper]
 #     pip-force-include = ["sentencepiece"]   # not imported, still needed
 #     pip-exclude = ["mycourse-internal"]     # never pip-installed by students
-#     student-base-deps = ["cached-hub>=0.3.0"]
+#     student-base-deps = ["cs-lab>=1.0"]
 #
 # Generates four variants per source plus a uv bundle. Every output directory
 # has one sub-directory per variant, `$(LOCAL_SUBDIR)/` and `$(COLAB_SUBDIR)/`
@@ -39,10 +39,19 @@
 # updates, and — on GitHub — the Colab notebooks open in Colab from it, which
 # no .ipynb served over plain HTTPS can do.
 #
-# Releasing the solutions is a switch, PUBLISH_SOLUTIONS (default no): until it
-# says yes, `make rsync` keeps $(SOLUTION_ZIP) and $(SOLUTION_DIR) off the server
-# and `make manifest` does not list them. Both only concern files that live
-# under $(DESTDIR_TP) — the directory that is deployed — e.g.
+# What is handed out, and what of it comes with its corrigé, is written in each
+# source's own header (see jupytext_notebook_helper.selection):
+#     publish: no     the practical is built for the teacher and run by `check`,
+#                     but reaches no student — no notebook under $(DESTDIR_TP),
+#                     no entry in the bundle, the index page or the manifest
+#     solution: yes   its corrigé is released; `solution: no` holds it back
+# PUBLISH_SOLUTIONS (default no) is what a header that says nothing means, so a
+# course still releases every corrigé at once by flipping it — and a single one
+# early by writing `solution: yes` in that practical alone. `make show-selection`
+# prints the result. Whatever is not released stays off the server: `make rsync`
+# keeps $(SOLUTION_ZIP) and $(SOLUTION_DIR) away, and `make manifest` does not
+# list them. Both only concern files that live under $(DESTDIR_TP) — the
+# directory that is deployed — e.g.
 #     SOLUTION_DIR := $(DESTDIR_TP)/solution
 #     SOLUTION_ZIP := $(DESTDIR_TP)/tp-mycourse-uv-solution.zip
 #
@@ -97,7 +106,9 @@ BUNDLE_EXTRA          ?=
 # Second bundle, with the solution notebooks ($(SOLUTION_DIR), local variants).
 # Empty: not built.
 SOLUTION_ZIP          ?=
-# Whether the solutions are released (deployed by `rsync`, listed by `manifest`).
+# Whether a corrigé is released (deployed by `rsync`, listed by `manifest`)
+# when its source's header does not say. A header always wins, so a practical
+# can be released alone (`solution: yes`) or held back (`solution: no`).
 PUBLISH_SOLUTIONS     ?= no
 # The index page handed to the students, at the root of $(DESTDIR_TP) — see the
 # `index` target below. INDEX_TITLE is the switch: empty means no page.
@@ -133,7 +144,9 @@ else
 BUNDLE_WITH_NOTEBOOKS :=
 endif
 
-# `yes` only if PUBLISH_SOLUTIONS says so — the safe default is to keep them back.
+# `yes` only if PUBLISH_SOLUTIONS says so — the safe default is to keep them
+# back. This is the course-wide *default*: what a source whose header says
+# nothing about its corrigé means (see $(SELECT) below, and `show-selection`).
 ifneq ($(filter $(PUBLISH_SOLUTIONS),yes Yes YES true True TRUE 1 on On ON),)
 SOLUTIONS_PUBLISHED := yes
 else
@@ -172,12 +185,33 @@ FILTER := $(PYTHON) python -m jupytext_notebook_helper.filter --src-root $(SRC_R
 
 PY_NOTEBOOKS  := $(wildcard $(SOURCES_DIR)/*.py)
 NAMES         := $(patsubst $(SOURCES_DIR)/%.py,%,$(PY_NOTEBOOKS))
-STUDENT_LOCAL := $(NAMES:%=$(STUDENT_LOCAL_DIR)/%.ipynb)
-STUDENT_COLAB := $(NAMES:%=$(STUDENT_COLAB_DIR)/%.ipynb)
+
+# What each source's own header says: `publish: no` keeps a practical out of
+# everything students see, `solution: yes|no` decides its corrigé one by one
+# (see jupytext_notebook_helper.selection). Both lists come back from a single
+# process at parse time — `P:<name>` for published, `S:<name>` for a released
+# corrigé — rather than from a generated makefile there would then be a rule
+# to keep fresh.
+#
+# $(NAMES) stays the whole of $(SOURCES_DIR): the teacher notebooks and
+# `check` cover every source, published or not. A practical held back must not
+# be a practical left to rot.
+SELECT := $(PYTHON) python -m jupytext_notebook_helper.selection \
+	--sources $(SOURCES_DIR) --solutions-default $(if $(SOLUTIONS_PUBLISHED),yes,no)
+SELECTION       := $(shell $(SELECT) --format tags)
+PUBLISHED_NAMES := $(patsubst P:%,%,$(filter P:%,$(SELECTION)))
+SOLUTION_NAMES  := $(patsubst S:%,%,$(filter S:%,$(SELECTION)))
+HELD_BACK_NAMES := $(filter-out $(PUBLISHED_NAMES),$(NAMES))
+# `yes` when at least one corrigé is released: what used to be
+# PUBLISH_SOLUTIONS alone now also depends on what the headers say.
+SOLUTIONS_RELEASED := $(if $(strip $(SOLUTION_NAMES)),yes,)
+
+STUDENT_LOCAL := $(PUBLISHED_NAMES:%=$(STUDENT_LOCAL_DIR)/%.ipynb)
+STUDENT_COLAB := $(PUBLISHED_NAMES:%=$(STUDENT_COLAB_DIR)/%.ipynb)
 TEACHER_LOCAL := $(NAMES:%=$(TEACHER_LOCAL_DIR)/%.ipynb)
 TEACHER_COLAB := $(NAMES:%=$(TEACHER_COLAB_DIR)/%.ipynb)
-SOLUTION_LOCAL := $(NAMES:%=$(SOLUTION_LOCAL_DIR)/%.ipynb)
-SOLUTION_COLAB := $(NAMES:%=$(SOLUTION_COLAB_DIR)/%.ipynb)
+SOLUTION_LOCAL := $(SOLUTION_NAMES:%=$(SOLUTION_LOCAL_DIR)/%.ipynb)
+SOLUTION_COLAB := $(SOLUTION_NAMES:%=$(SOLUTION_COLAB_DIR)/%.ipynb)
 # Older output names, removed by `clean` so an upgraded checkout does not keep
 # serving stale notebooks: <name>.colab.ipynb (before 0.8) and <name>.ipynb at
 # the root of an output directory (before 2.0).
@@ -188,7 +222,7 @@ TESTED        := $(NAMES:%=$(TESTED_DIR)/%.tested)
 RESOLVED      := $(NAMES:%=$(RESOLVED_DIR)/%.resolved)
 
 .PHONY: all student notebooks teacher solution bundle check check-raw \
-	check-bundle show-tests show-raw lab lab-test clean
+	check-bundle show-tests show-raw show-selection lab lab-test clean
 
 # `help` used to be the first target here, and so the default goal; it now sits
 # at the bottom, one section per kind of work, so say it explicitly — unless the
@@ -197,12 +231,35 @@ ifeq ($(.DEFAULT_GOAL),)
 .DEFAULT_GOAL := help
 endif
 
+# The corrigé bundle only exists once a corrigé is released; asking for it
+# otherwise would archive the env under a name that promises solutions.
+SOLUTION_ZIP_BUILT := $(if $(SOLUTIONS_RELEASED),$(SOLUTION_ZIP))
+
+# $(call prune_stale,<directory>,<names kept>): remove the notebooks of
+# practicals that directory is no longer meant to hold. A `publish: no` added
+# to a header is otherwise invisible — the file built last week stays on disk,
+# and rsync keeps serving it.
+define prune_stale
+	@for f in $(1)/*.ipynb; do \
+		[ -e "$$f" ] || continue; \
+		stem=$$(basename "$$f" .ipynb); \
+		case " $(2) " in \
+			*" $$stem "*) ;; \
+			*) echo "  $$f: no longer handed out, removing"; rm -f "$$f";; \
+		esac; \
+	done
+endef
+
 all: student teacher
 student: $(STUDENT_LOCAL) $(STUDENT_COLAB) $(ZIP)
+	$(call prune_stale,$(STUDENT_LOCAL_DIR),$(PUBLISHED_NAMES))
+	$(call prune_stale,$(STUDENT_COLAB_DIR),$(PUBLISHED_NAMES))
 notebooks: student  # backward-compatible alias
 teacher: $(TEACHER_LOCAL) $(TEACHER_COLAB)
-solution: $(SOLUTION_LOCAL) $(SOLUTION_COLAB) $(SOLUTION_ZIP)
-bundle: $(ZIP) $(SOLUTION_ZIP)
+solution: $(SOLUTION_LOCAL) $(SOLUTION_COLAB) $(SOLUTION_ZIP_BUILT)
+	$(call prune_stale,$(SOLUTION_LOCAL_DIR),$(SOLUTION_NAMES))
+	$(call prune_stale,$(SOLUTION_COLAB_DIR),$(SOLUTION_NAMES))
+bundle: $(ZIP) $(SOLUTION_ZIP_BUILT)
 
 # Each variant has its own directory, so the patterns below never compete.
 # Every recipe creates its own directory with `mkdir -p $(@D)`.
@@ -294,7 +351,7 @@ endif
 # Resolution test for the bundle: unzip and verify `uv` can resolve the env from
 # the shipped pyproject + uv.lock — WITHOUT installing anything (`uv lock --check`).
 # Catches e.g. stray editable/path deps that only exist on the instructor's machine.
-check-bundle: $(ZIP) $(SOLUTION_ZIP)
+check-bundle: $(ZIP) $(SOLUTION_ZIP_BUILT)
 	@for zip in $^; do \
 		tmp=$$(mktemp -d); \
 		unzip -q $$zip -d $$tmp; \
@@ -351,6 +408,17 @@ show-tests:
 		else s="[ -- ]"; fi; \
 		printf "  %-28s %s\n" "$$n" "$$s"; \
 	done
+
+# What of $(SOURCES_DIR) reaches the students, and what stays back — the
+# headers' `publish:` / `solution:` keys, read the way the build reads them.
+show-selection:
+	@printf "  %-40s %s\n" "source" "state"
+	@printf "  %-40s %s\n" "------" "-----"
+	@$(SELECT) --format report
+	@echo
+	@echo "  publish: no  in a source's header keeps it out (it is still built"
+	@echo "  for the teacher and still run by 'make check'); solution: yes|no"
+	@echo "  overrides PUBLISH_SOLUTIONS (now: $(PUBLISH_SOLUTIONS)) for that one."
 
 # ---- check-raw: run each source as a plain script (imports the full src/ ----
 # module). Faster and looser than `check`; handy for early debugging, but it
@@ -528,10 +596,10 @@ show-run:
 		"total" "" "$$(( total / 60 ))" "$$(( total % 60 ))"
 
 # ---- check-resources: the declared Hub resources vs. what the sources load --
-# Only defined when the course points RESOURCES_PY at a cached-hub declaration
+# Only defined when the course points RESOURCES_PY at a cs-lab declaration
 # module (e.g. src/mycourse/resources.py); `check` then depends on it.
 #
-# `cached-hub check` reads the load_hf_* calls back out of $(SOURCES_DIR) and
+# `cs-lab cache check` reads the load_hf_* calls back out of $(SOURCES_DIR) and
 # fails when the declaration no longer describes them: a model added to a
 # notebook, one that stopped being loaded. It works on the AST, without
 # importing, so a resource built at run time is never executed by it — hence
@@ -540,16 +608,16 @@ show-run:
 # or a section that no longer loads.
 #
 # For a new notebook, a skeleton to fill in:
-#     cached-hub scan $(SOURCES_DIR) --emit <section>
+#     cs-lab cache scan $(SOURCES_DIR) --emit <section>
 RESOURCES_PY ?=
 #: Dotted module path of $(RESOURCES_PY), derived from $(SRC_ROOT).
 RESOURCES_MODULE ?= $(subst /,.,$(patsubst $(SRC_ROOT)/%,%,$(basename $(RESOURCES_PY))))
-CACHED_HUB ?= $(PYTHON) cached-hub
+CS_LAB ?= $(PYTHON) cs-lab
 
 ifneq ($(strip $(RESOURCES_PY)),)
 .PHONY: check-resources
 check-resources:
-	@$(CACHED_HUB) check $(SOURCES_DIR) --search-path $(SRC_ROOT) \
+	@$(CS_LAB) cache check $(SOURCES_DIR) --search-path $(SRC_ROOT) \
 		--declaration $(RESOURCES_PY)
 	@$(PYTHON) python -m $(RESOURCES_MODULE) list >/dev/null
 	@echo "$(RESOURCES_MODULE) imports and lists its resources"
@@ -588,7 +656,7 @@ SOLUTION_REL_DIR := $(call under_destdir,$(SOLUTION_DIR))
 SOLUTION_REL_ZIP := $(call under_destdir,$(SOLUTION_ZIP))
 RSYNC_SOLUTION_PATTERNS := $(if $(SOLUTION_REL_DIR),/$(SOLUTION_REL_DIR)/ /$(SOLUTION_REL_DIR)/**) \
                            $(if $(SOLUTION_REL_ZIP),/$(SOLUTION_REL_ZIP))
-RSYNC_ARGS := $(foreach i,$(RSYNC_SOLUTION_PATTERNS),$(if $(SOLUTIONS_PUBLISHED),--include,--exclude) "$(i)") \
+RSYNC_ARGS := $(foreach i,$(RSYNC_SOLUTION_PATTERNS),$(if $(SOLUTIONS_RELEASED),--include,--exclude) "$(i)") \
               $(foreach i,$(RSYNC_INCLUDE) $(if $(RSYNC_DATA),data/ data/*),--include "$(i)")
 
 ifneq ($(strip $(SSH_HOST)),)
@@ -596,8 +664,8 @@ ifneq ($(strip $(SSH_HOST)),)
 $(RSYNC_DATA_LINK):
 	ln -sf $(RSYNC_DATA) $@
 
-rsync: student $(if $(SOLUTIONS_PUBLISHED),solution) $(RSYNC_DATA_LINK) $(RSYNC_INDEX)
-	@echo "=== Synchronizing student notebooks$(if $(SOLUTIONS_PUBLISHED), and solutions) on $(SSH_HOST) ==="
+rsync: student $(if $(SOLUTIONS_RELEASED),solution) $(RSYNC_DATA_LINK) $(RSYNC_INDEX)
+	@echo "=== Synchronizing student notebooks$(if $(SOLUTIONS_RELEASED), and solutions) on $(SSH_HOST) ==="
 	@ssh $(SSH_HOST) mkdir -p $(SSH_PATH)
 	rsync --copy-unsafe-links -azv $(RSYNC_ARGS) --exclude "*" --delete-excluded \
 		$(DESTDIR_TP)/ $(SSH_HOST):$(SSH_PATH)
@@ -645,6 +713,12 @@ GIT_PUBLISH_DIR        ?= outputs/git-publish
 GIT_PUBLISH_STAGE      ?= $(BUNDLE_DIR)/git-publish
 #: Ship the uv environment at the root of the repository (the bundle, unzipped).
 GIT_PUBLISH_ENV        ?= yes
+#: Ship the notebooks themselves. Defaults to BUNDLE_NOTEBOOKS: a course that
+#: hands the notebooks out one by one rather than in the archive usually means
+#: it of every archive, this repository included. Set it to `yes` to publish an
+#: env-only zip but a repository with the notebooks — which is what the Colab
+#: links of `make manifest` need (they open a notebook from GitHub).
+GIT_PUBLISH_NOTEBOOKS  ?= $(BUNDLE_NOTEBOOKS)
 GIT_PUBLISH_README     ?= $(STUDENT_README)
 #: More files at the root of the published tree, under their own names.
 GIT_PUBLISH_EXTRA      ?=
@@ -662,13 +736,20 @@ GIT_PUBLISH_WITH_ENV := yes
 else
 GIT_PUBLISH_WITH_ENV :=
 endif
+
+ifeq ($(filter $(GIT_PUBLISH_NOTEBOOKS),no No NO false False FALSE 0 off Off OFF),)
+GIT_PUBLISH_WITH_NOTEBOOKS := yes
+else
+GIT_PUBLISH_WITH_NOTEBOOKS :=
+endif
 # The corrigé travels only once it is released, like it does to the server.
-GIT_PUBLISH_SOLUTION_REL := $(if $(SOLUTIONS_PUBLISHED),$(SOLUTION_REL_DIR))
+GIT_PUBLISH_SOLUTION_REL := $(if $(GIT_PUBLISH_WITH_NOTEBOOKS),$(if $(SOLUTIONS_RELEASED),$(SOLUTION_REL_DIR)))
 GIT_PUBLISH_EXCLUDES := $(foreach p,$(GIT_PUBLISH_PRESERVE),--exclude "/$(p)")
 
 ifneq ($(strip $(GIT_PUBLISH_URL)),)
 GIT_PUBLISH_ENV_FILES := $(if $(GIT_PUBLISH_WITH_ENV),\
 	$(BUNDLE_PYPROJECT) $(BUNDLE_LOCK) $(GIT_PUBLISH_README) $(BUNDLE_EXTRA))
+GIT_PUBLISH_NOTEBOOK_FILES := $(if $(GIT_PUBLISH_WITH_NOTEBOOKS),$(STUDENT_LOCAL) $(STUDENT_COLAB))
 GIT_PUBLISH_SOLUTION_FILES := $(if $(GIT_PUBLISH_SOLUTION_REL),$(SOLUTION_LOCAL) $(SOLUTION_COLAB))
 GIT_PUBLISH_SOLUTION_STAGE := $(GIT_PUBLISH_STAGE)/$(GIT_PUBLISH_SOLUTION_REL)
 # The hand-out page, when the course has one: the published tree mirrors
@@ -680,12 +761,13 @@ GIT_PUBLISH_INDEX := $(if $(strip $(INDEX_TITLE)),$(INDEX_HTML))
 # The notebooks are named one by one, never a directory: the `data` symlink
 # `make rsync` leaves in $(DESTDIR_TP), and any .ipynb_checkpoints/, then have
 # no way into the published repository.
-publish-git: $(STUDENT_LOCAL) $(STUDENT_COLAB) $(GIT_PUBLISH_SOLUTION_FILES) \
+publish-git: $(GIT_PUBLISH_NOTEBOOK_FILES) $(GIT_PUBLISH_SOLUTION_FILES) \
 		$(GIT_PUBLISH_ENV_FILES) $(GIT_PUBLISH_EXTRA) $(GIT_PUBLISH_INDEX)
 	@rm -rf $(GIT_PUBLISH_STAGE)
-	@mkdir -p $(GIT_PUBLISH_STAGE)/$(LOCAL_SUBDIR) $(GIT_PUBLISH_STAGE)/$(COLAB_SUBDIR)
-	@cp $(STUDENT_LOCAL) $(GIT_PUBLISH_STAGE)/$(LOCAL_SUBDIR)/
-	@cp $(STUDENT_COLAB) $(GIT_PUBLISH_STAGE)/$(COLAB_SUBDIR)/
+	@mkdir -p $(GIT_PUBLISH_STAGE)
+	$(if $(GIT_PUBLISH_WITH_NOTEBOOKS),@mkdir -p $(GIT_PUBLISH_STAGE)/$(LOCAL_SUBDIR) $(GIT_PUBLISH_STAGE)/$(COLAB_SUBDIR))
+	$(if $(GIT_PUBLISH_WITH_NOTEBOOKS),@cp $(STUDENT_LOCAL) $(GIT_PUBLISH_STAGE)/$(LOCAL_SUBDIR)/)
+	$(if $(GIT_PUBLISH_WITH_NOTEBOOKS),@cp $(STUDENT_COLAB) $(GIT_PUBLISH_STAGE)/$(COLAB_SUBDIR)/)
 	$(if $(GIT_PUBLISH_SOLUTION_REL),@mkdir -p $(GIT_PUBLISH_SOLUTION_STAGE)/$(LOCAL_SUBDIR) $(GIT_PUBLISH_SOLUTION_STAGE)/$(COLAB_SUBDIR))
 	$(if $(GIT_PUBLISH_SOLUTION_REL),@cp $(SOLUTION_LOCAL) $(GIT_PUBLISH_SOLUTION_STAGE)/$(LOCAL_SUBDIR)/)
 	$(if $(GIT_PUBLISH_SOLUTION_REL),@cp $(SOLUTION_COLAB) $(GIT_PUBLISH_SOLUTION_STAGE)/$(COLAB_SUBDIR)/)
@@ -776,8 +858,10 @@ MANIFEST_DESCRIPTION_KEY ?= practical_description
 # place to write the URL is a second place for it to go stale. A repository
 # elsewhere than GitHub leaves the entries relative, with a word on stderr —
 # Colab imports from GitHub, Drive or a gist only.
-MANIFEST_COLAB_GIT_ARGS = $(if $(strip $(GIT_PUBLISH_URL)),\
-	--colab-git-url "$(GIT_PUBLISH_URL)" --colab-git-branch "$(GIT_PUBLISH_BRANCH)")
+# Nothing to open in Colab when the repository carries no notebooks
+# (GIT_PUBLISH_NOTEBOOKS), so the entries then stay relative.
+MANIFEST_COLAB_GIT_ARGS = $(if $(GIT_PUBLISH_WITH_NOTEBOOKS),$(if $(strip $(GIT_PUBLISH_URL)),\
+	--colab-git-url "$(GIT_PUBLISH_URL)" --colab-git-branch "$(GIT_PUBLISH_BRANCH)"))
 
 # The archives and, once PUBLISH_SOLUTIONS says so, the solutions: whatever of
 # them lives under $(DESTDIR_TP), so is served from the same base URL. Held in
@@ -785,10 +869,11 @@ MANIFEST_COLAB_GIT_ARGS = $(if $(strip $(GIT_PUBLISH_URL)),\
 # first comma, and a label may well have one.
 MANIFEST_BUNDLE_ARGS := \
 	$(if $(call under_destdir,$(ZIP)),--bundle "student=$(call under_destdir,$(ZIP))") \
-	$(if $(SOLUTIONS_PUBLISHED),$(if $(SOLUTION_REL_ZIP),--bundle "solution=$(SOLUTION_REL_ZIP)"))
+	$(if $(SOLUTIONS_RELEASED),$(if $(SOLUTION_REL_ZIP),--bundle "solution=$(SOLUTION_REL_ZIP)"))
 MANIFEST_SOLUTION_ARGS = --solution-subdir "$(SOLUTION_REL_DIR)" \
 	--solution-label "$(MANIFEST_SOLUTION_LABEL)" \
-	--solution-colab-label "$(MANIFEST_SOLUTION_COLAB_LABEL)"
+	--solution-colab-label "$(MANIFEST_SOLUTION_COLAB_LABEL)" \
+	--solutions-default $(if $(SOLUTIONS_PUBLISHED),yes,no)
 
 # What describes the practicals, whoever the reader is. `manifest` adds the
 # base URL of its own reader; `index` (below) writes the same list for a reader
@@ -800,7 +885,7 @@ MANIFEST_COMMON_ARGS = --sources $(SOURCES_DIR) --local-subdir "$(LOCAL_SUBDIR)"
 	--colab-label "$(MANIFEST_COLAB_LABEL)" \
 	$(MANIFEST_COLAB_GIT_ARGS) \
 	$(MANIFEST_BUNDLE_ARGS) \
-	$(if $(SOLUTIONS_PUBLISHED),$(if $(SOLUTION_REL_DIR),$(MANIFEST_SOLUTION_ARGS)))
+	$(if $(SOLUTION_REL_DIR),$(MANIFEST_SOLUTION_ARGS))
 
 .PHONY: manifest
 manifest:
@@ -832,7 +917,7 @@ manifest:
 #     INDEX_TITLE := Reinforcement learning — practicals
 #     INDEX_INTRO := sources/index-intro.html   # a fragment, inserted verbatim
 #
-INDEX_ZIPS := $(ZIP) $(if $(SOLUTIONS_PUBLISHED),$(SOLUTION_ZIP))
+INDEX_ZIPS := $(ZIP) $(if $(SOLUTIONS_RELEASED),$(SOLUTION_ZIP))
 # Held in a variable rather than written inline: a `$(if ...)` argument is cut
 # at its first comma, and a label may well have one.
 INDEX_LABEL_ARGS := \
@@ -892,9 +977,9 @@ HELP_PROJECT ?=
 # expanded only afterwards.
 define HELP_RESOURCES
   check-resources  check $(RESOURCES_PY) against the load_hf_* calls in
-                   $(SOURCES_DIR)/ (cached-hub check), then import it for real
+                   $(SOURCES_DIR)/ (cs-lab cache check), then import it for real
                    and build every resource. Run by 'check'. A skeleton for a
-                   new notebook: cached-hub scan $(SOURCES_DIR) --emit <section>
+                   new notebook: cs-lab cache scan $(SOURCES_DIR) --emit <section>
 endef
 
 define HELP_RSYNC
@@ -931,12 +1016,20 @@ Build
                    for whatever announces them — reads the headers only, builds
                    no notebook. Needs MANIFEST=<file>; MANIFEST_BASE_URL or
                    MANIFEST_RELATIVE_TO says where they are served from.
-                   Solutions listed only with PUBLISH_SOLUTIONS=yes (now: $(PUBLISH_SOLUTIONS)).
+                   A practical says in its own header whether it is listed
+                   ('publish:') and whether its corrigé is ('solution:').
   outline          per-notebook table of contents (headers + print_header())
                    with each [[student]]/[[assert]] marker nested under its
                    section — reads the sources only, builds no notebook.
                      OUTLINE_NAMES=<name> [<name> ...]  restrict to these
   clean            remove generated notebooks, $(TEACHER_DIR)/, zip, $(DEPDIR), $(TESTED_DIR)
+
+What is handed out
+  show-selection   which practicals are published, and which release their
+                   corrigé — from each source's own header ('publish:',
+                   'solution:'), with PUBLISH_SOLUTIONS (now: $(PUBLISH_SOLUTIONS)) as the
+                   default for a header that says nothing.$(if $(HELD_BACK_NAMES),
+                   Held back right now: $(HELD_BACK_NAMES).)
 
 Check the sources (run them as scripts, pass/fail)
   check            run every source with internal imports RESOLVED (the exact

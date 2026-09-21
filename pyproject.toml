@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "jupytext-notebook-helper"
 authors = [{ name = "Benjamin Piwowarski", email = "benjamin@piwowarski.fr" }]
-description = "Runtime helpers + build tooling for jupytext-percent teaching notebooks: hardware/profile detection, terminal image display, and student/teacher/colab generation"
+description = "Build tooling for jupytext-percent teaching notebooks: student/teacher/colab/solution generation, a uv bundle, an index page, and a build that runs every source"
 readme = "README.md"
 license = { text = "MIT" }
 keywords = ["jupyter", "jupytext", "teaching", "notebook"]
@@ -25,7 +25,13 @@ classifiers = [
 requires-python = ">=3.10"
 dynamic = ["version"]
 dependencies = [
-    # runtime helpers (imported in notebooks)
+    # what a notebook itself needs at run time — the compute-profile ladder and
+    # hardware detection — is cs-lab's, not this package's. Depended on here
+    # because the author's side reads it: `is_notebook()`, and the note
+    # `hardware()` shows, to which this package adds figure visibility.
+    "cs-lab>=1.0",
+    # rendering a figure in the terminal when a source runs as a script
+    # (`make check`), never in a notebook
     "imgcat>=0.5.0",
     "matplotlib>=3.5",
     "pillow>=9.0",

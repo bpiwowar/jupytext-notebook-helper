@@ -89,7 +89,7 @@ never throws away a night's work.
 ## Declared Hub resources: `make check-resources`
 
 A course that declares the models and datasets its notebooks load — a
-[`cached-hub`](https://github.com/bpiwowar/cached-hub) declaration module — gets
+[`cs-lab`](https://github.com/bpiwowar/cs-lab) declaration module — gets
 a `check-resources` target, and `check` depends on it, by pointing
 `RESOURCES_PY` at that module:
 
@@ -97,7 +97,7 @@ a `check-resources` target, and `check` depends on it, by pointing
 RESOURCES_PY := src/mycourse/resources.py
 ```
 
-It runs two steps, because they catch different things. `cached-hub check` reads
+It runs two steps, because they catch different things. `cs-lab cache check` reads
 the `load_hf_*` calls back out of `$(SOURCES_DIR)` and fails when the
 declaration no longer describes them (a model added to a notebook, one that
 stopped being loaded); it works on the AST, without importing, so a resource

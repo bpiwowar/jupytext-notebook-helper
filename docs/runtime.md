@@ -2,45 +2,39 @@
 
 # Runtime helpers
 
-What a notebook imports from this package at run time. `torch` is optional: the build half works without it.
+Three questions a practical has to answer, and they are not the same question
+— nor do they all belong to the same package:
 
-Three questions a notebook has to answer, and they are not the same question:
+| Question | Answered by | Set with | Lives in |
+|---|---|---|---|
+| What machine is this? | `hardware()` | detected; `NOTEBOOK_BACKEND` to force | [cs-lab](https://github.com/bpiwowar/cs-lab) |
+| How much work should I do? | a `cs_lab.Profile` ladder | `NOTEBOOK_PROFILE` | [cs-lab](https://github.com/bpiwowar/cs-lab) |
+| Where does output go? | `OutputMode` | `NOTEBOOK_OUTPUT` | here |
 
-| Question | Answered by | Set with |
-|---|---|---|
-| What machine is this? | `hardware()` | detected; `NOTEBOOK_BACKEND` to force |
-| How much work should I do? | a `cached_hub.Profile` ladder | `NOTEBOOK_PROFILE` |
-| Where does output go? | `OutputMode` | `NOTEBOOK_OUTPUT` |
+The first two are what the *notebook* needs, on the student's machine as much
+as on yours, so they are `cs-lab`'s — a package with no hard dependencies that
+a student installs alongside the course's own. The third is an *authoring*
+concern: `print_header()` never survives into a built notebook (the filter
+turns it into a markdown header), and under a kernel the output mode is always
+`notebook`, so nothing here is patched.
 
 ```python
-from jupytext_notebook_helper import hardware
+# %% tags=["teacher", "not-colab"]
+from jupytext_notebook_helper import *      # print_header, figures in the terminal
+from cs_lab import hardware
 from mycourse.profiles import Profile
 
 hw = hardware(Profile)
+```
+
+```python
+# %%  (an ordinary cell — this is what students run too)
 MODEL = Profile.pick(fast_test="tiny/model", low_gpu="big/model")
 model = load_hf_model(MODEL, AutoModelForCausalLM, dtype=hw.dtype).to(hw.device)
 ```
 
-### `hardware()`
-
-What the machine offers, and nothing about how hard to push it:
-
-- `hw.device` / `hw.backend` (`cuda` | `mps` | `cpu`) / `hw.total_memory_gb`.
-  **MPS counts as a GPU** — an Apple Silicon laptop with 128 GB of unified
-  memory is not a machine without one.
-- `hw.dtype` for inference (bf16 on CUDA, fp16 on MPS, fp32 on CPU) and
-  `hw.train_dtype` for training (bf16 on CUDA, fp32 elsewhere — LoRA in pure
-  fp16, without bf16's range, is unstable).
-- `hw.has_bitsandbytes` / `hw.has_vllm` / `hw.has_flash_attention` /
-  `hw.supports_bf16`: each is *the library imports* **and** *the backend
-  supports it*. Gate a section on these rather than on `device.type == "cuda"`,
-  which conflates "is this machine big" with "does this library exist here".
-- `hw.synchronize()` / `hw.empty_cache()` / `hw.memory_used_gb()`, so a notebook
-  stops writing the per-device branches by hand.
-- `NOTEBOOK_BACKEND=cpu` forces a backend, to reproduce a CPU-only run.
-
-`torch` is imported lazily: the build half of this package still works without
-it.
+`hardware()`, the `Profile` ladder and the in-notebook chooser are documented
+in [cs-lab's README](https://github.com/bpiwowar/cs-lab#readme).
 
 ### Where output goes
 
@@ -52,7 +46,14 @@ otherwise.
 
 It is a **start-up** decision — matplotlib's backend cannot be swapped under a
 running kernel — so `set_output_mode()` warns when a change cannot take effect
-rather than pretending it did.
+rather than pretending it did. For the same reason it stays out of the profile
+chooser, which *can* be flipped mid-session; importing this package instead
+adds an `images: shown|off` part to the note `hardware()` shows, so a teacher's
+notebook says where both stand:
+
+```
+Profile: FAST_TEST — tiny budgets · images: off
+```
 
 - `print_header(title)` — a formatted header when run as a script;
   jupytext-filter turns it into a markdown header in notebooks.

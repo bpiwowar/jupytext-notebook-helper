@@ -16,6 +16,66 @@ removal. Lift the ceiling once migrated.
 Each entry: what goes away, what replaces it, and the generic recipe for
 moving from one to the other.
 
+## `hardware()`, `Hardware` and `is_notebook` move to `cs-lab` — staged
+
+- **Removed:** `jupytext_notebook_helper.machine` and
+  `jupytext_notebook_helper.notebook`, and with them the names
+  `hardware`, `Hardware`, `ENV_BACKEND` and `is_notebook` that
+  `from jupytext_notebook_helper import *` used to bring in.
+- **Replaced by:** the same objects in
+  [`cs-lab`](https://github.com/bpiwowar/cs-lab) — `from cs_lab import
+  hardware` — which is also where the `Profile` ladder already lived (it was
+  `cached-hub`, renamed in the same move; its imports change from
+  `cached_hub` to `cs_lab`, its CLI from `cached-hub` to `cs-lab`, and its
+  environment variables from `CACHED_HUB_*` to `CS_LAB_*`, the old names
+  still being read).
+- **Why:** what a *notebook* needs at run time and what an *author* needs to
+  build one are two different installs. `print_header()` never survives into a
+  built notebook and the `imgcat` rendering only ever runs when a source is
+  executed as a script, so they stay here; `hardware()` and the ladder are
+  code students run, and a course should not have to install the build tooling
+  — jupytext, nbformat and all — to call `hardware()` in a Colab notebook.
+  This package now depends on `cs-lab` (one arrow, authoring → runtime) and
+  registers the `images: shown|off` part of the note `hardware()` shows.
+- **Migration recipe:**
+  - In the sources: `from jupytext_notebook_helper import hardware` becomes
+    `from cs_lab import hardware`. The star-import of this package stays, in
+    its `teacher, not-colab` cell, for `print_header` and the terminal
+    figures.
+  - `from cached_hub import Profile as BaseProfile` becomes
+    `from cs_lab import Profile as BaseProfile`.
+  - In the course's `pyproject.toml`: `cached-hub` becomes `cs-lab`, and it
+    belongs with the notebooks' own dependencies rather than the build ones.
+  - Nothing to do for `NOTEBOOK_BACKEND` / `NOTEBOOK_PROFILE` /
+    `NOTEBOOK_OUTPUT`: the variables are unchanged.
+
+## `make solution` follows the release, and `BUNDLE_NOTEBOOKS` reaches git — staged
+
+- **Changed:** `make solution` and `SOLUTION_ZIP` now build the corrigés that
+  are *released* — what `PUBLISH_SOLUTIONS` and the sources' `solution:`
+  headers say — instead of every source. With the default
+  `PUBLISH_SOLUTIONS := no` and no header saying otherwise, `make solution`
+  builds nothing and `make bundle` writes no solution archive.
+  `make publish-git` gained `GIT_PUBLISH_NOTEBOOKS`, which defaults to
+  `BUNDLE_NOTEBOOKS`: a course with `BUNDLE_NOTEBOOKS := no` now publishes an
+  environment-only repository, and `make manifest` leaves the Colab links
+  relative (there is no notebook in the repository for Colab to open).
+- **Why:** an archive named after the solutions must not carry a corrigé that
+  is not out yet, and a directory that holds exactly what is released makes
+  every consumer downstream — `rsync`, the manifest, the index page — correct
+  without a second list of what to filter. For the git tree, `BUNDLE_NOTEBOOKS`
+  is a statement about how the course hands its notebooks out, and the
+  repository is one of the ways it does.
+- **Migration recipe:**
+  - To read a corrigé you have not released, use `make teacher` (solutions
+    kept), or `make solution PUBLISH_SOLUTIONS=yes` for the corrigé format.
+  - To release them one at a time, write `solution: yes` in that practical's
+    header rather than flipping the course-wide switch (see
+    [Writing a source](docs/authoring.md#what-is-handed-out)).
+  - A course with `BUNDLE_NOTEBOOKS := no` that *does* want the notebooks in
+    its public repository sets `GIT_PUBLISH_NOTEBOOKS := yes`.
+  - `make show-selection` prints what goes out, practical by practical.
+
 ## `test_mode` / `TESTING_MODE` — shipped in v1.0.0
 
 - **Removed:** `test_mode` (the live proxy), `skip_plots`, `set_test_mode()`,

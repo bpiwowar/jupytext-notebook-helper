@@ -35,6 +35,41 @@ inside an unquoted YAML scalar is read as a mapping and loses the whole
 header. The keys are configurable (`MANIFEST_NAME_KEY`,
 `MANIFEST_DESCRIPTION_KEY`).
 
+### What is handed out
+
+The same place says whether the practical reaches the students at all, and
+whether its corrigé goes with it:
+
+```python
+# ---
+# jupyter:
+#   metadata:
+#     practical_name: "Soft Actor-Critic"
+#     publish: no        # not handed out — still built for the teacher
+#     solution: yes      # ... but its corrigé is released
+# ---
+```
+
+| key | default | what it gates |
+|-----|---------|---------------|
+| `publish` | yes | the student notebooks, the bundle, `index.html`, the manifest, `rsync`, `publish-git` |
+| `solution` | `PUBLISH_SOLUTIONS` | the corrigé of *this* practical: built by `make solution`, carried by `SOLUTION_ZIP`, listed and deployed |
+
+`publish: no` holds a practical back without shelving it: the teacher
+notebooks are still built and `make check` still runs it, so a practical you
+are not handing out this year does not quietly stop working. A notebook that
+was published before and is now held back is removed from the output
+directories on the next `make student`, so `rsync --delete-excluded` takes it
+off the server.
+
+`PUBLISH_SOLUTIONS` (default `no`, see [Setting up a
+course](course-setup.md#a-second-bundle-with-the-solutions)) is only what a
+header that says nothing means. A header always wins, so one corrigé can go
+out early (`solution: yes`) or stay back when the rest are released
+(`solution: no`). An unpublished practical never releases a corrigé.
+
+`make show-selection` prints the resulting lists.
+
 ## Markers
 
 An ordinary percent notebook, with a small marker vocabulary interpreted by the

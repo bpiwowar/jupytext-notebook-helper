@@ -60,7 +60,7 @@ pip-exclude = ["mycourse-internal"]
 # installed, but without a version pin (see below)
 pip-relax = ["numpy", "torch"]
 # added to the student environment whatever the notebooks import
-student-base-deps = ["cached-hub>=0.3.0"]
+student-base-deps = ["cs-lab>=1.0"]
 student-env-name = "tp-mycourse"
 student-requires-python = ">=3.10, <3.12"
 ```
@@ -81,8 +81,8 @@ and it applies to `[build-system] requires` too.
 
 The student environment is generated from the union of the per-notebook package
 manifests plus that base, deduplicated **by project name, constrained
-requirement first**: a notebook importing `cached_hub` contributes a bare
-`cached-hub`, and `student-base-deps` is where a floor can be put on it —
+requirement first**: a notebook importing `cs_lab` contributes a bare
+`cs-lab`, and `student-base-deps` is where a floor can be put on it —
 without one, `uv lock` keeps whatever version it first resolved, which is how a
 bundle ends up shipping a year-old release.
 
@@ -112,9 +112,10 @@ the zip is rebuilt only when the environment changes, not on every build.
 (`$(SOLUTION_DIR)`, local variants) in `notebooks/`, under the same file names
 as the student ones. `make solution` and `make bundle` build it.
 
-Solutions are usually handed out after the session, so their release is a
-switch, `PUBLISH_SOLUTIONS` (default `no`). It concerns whatever of the
-solutions lives under `$(DESTDIR_TP)`, the deployed directory:
+Solutions are usually handed out after the session, so `PUBLISH_SOLUTIONS`
+(default `no`) says whether a practical releases its corrigé when its own
+header does not. It concerns whatever of the solutions lives under
+`$(DESTDIR_TP)`, the deployed directory:
 
 ```makefile
 SOLUTION_DIR      := $(DESTDIR_TP)/solution          # a direct sub-directory
@@ -123,16 +124,39 @@ SOLUTION_ZIP      := $(DESTDIR_TP)/tp-mycourse-uv-solution.zip
 PUBLISH_SOLUTIONS := no                               # yes once released
 ```
 
+- `make solution` builds the corrigés that are released, and `SOLUTION_ZIP`
+  carries exactly those — an archive named after the solutions never holds one
+  that is not out yet. Use `make teacher` to read a corrigé you have not
+  released.
 - `make rsync` excludes them (and `--delete-excluded` removes a copy that
-  reached the server early); with `yes` it builds `solution` and deploys them,
-  whatever `RSYNC_INCLUDE` says.
+  reached the server early); once something is released it builds `solution`
+  and deploys it, whatever `RSYNC_INCLUDE` says.
 - `make manifest` lists the archives under `$(DESTDIR_TP)` in `bundles`
-  (`student`, and `solution` once released), and with `yes` adds each
-  practical's solution notebooks to its `files`, flagged `"solution": true`
-  and labelled `MANIFEST_SOLUTION_LABEL` / `MANIFEST_SOLUTION_COLAB_LABEL`.
+  (`student`, and `solution` once released), and adds a practical's solution
+  notebooks to its `files` — flagged `"solution": true` and labelled
+  `MANIFEST_SOLUTION_LABEL` / `MANIFEST_SOLUTION_COLAB_LABEL` — as soon as
+  that practical releases them.
 - `make publish-git`, below, keeps them out of the public repository in the
   same way — with the difference that a git history is permanent: once pushed,
   a corrigé stays in it even if a later run takes it off the tip.
+
+### Practical by practical
+
+`PUBLISH_SOLUTIONS` is the course-wide *default*; each source overrides it in
+its own header, which is also where a practical says whether it is handed out
+at all (see [Writing a source](authoring.md#what-is-handed-out)):
+
+```python
+# ---
+# jupyter:
+#   metadata:
+#     publish: no        # built for the teacher, checked, handed to nobody
+#     solution: yes      # this corrigé is out, whatever PUBLISH_SOLUTIONS says
+# ---
+```
+
+`make show-selection` prints what that adds up to: which practicals go out,
+which of them with their corrigé, and which are held back.
 
 ## Deployment: `make rsync`
 
@@ -181,8 +205,9 @@ have it rebuilt with every build. It
 is written from the same description `make manifest` produces — names and
 descriptions from the source headers (`practical_name`,
 `practical_description`), Colab links absolute when `GIT_PUBLISH_URL` is a
-GitHub repository, corrigés listed only once `PUBLISH_SOLUTIONS` says yes — so
-the page cannot list something the deployment does not carry.
+GitHub repository that carries the notebooks, and only the practicals and
+corrigés that are actually released — so the page cannot list something the
+deployment does not carry.
 
 The page is one self-contained file: inline CSS (light and dark), no script,
 no font to fetch, and nothing dated in it, so a build that changes nothing
@@ -228,11 +253,18 @@ uv.lock            $(BUNDLE_LOCK)
 <BUNDLE_EXTRA>     the files the zip carries at its root
 local/<name>.ipynb
 colab/<name>.ipynb
-solution/…         once PUBLISH_SOLUTIONS says yes
+solution/…         the corrigés that are released
 ```
 
 `GIT_PUBLISH_ENV := no` leaves the environment out, publishing the notebooks
-alone. `GIT_PUBLISH_EXTRA` adds files at the root.
+alone. `GIT_PUBLISH_NOTEBOOKS` does the converse and follows `BUNDLE_NOTEBOOKS`
+by default: a course that hands the notebooks out one by one rather than in an
+archive usually means it of this repository too. Set it to `yes` to publish an
+env-only zip but a repository with the notebooks — which is what the absolute
+Colab links need, since Colab opens a notebook from GitHub; without the
+notebooks there, `make manifest` leaves those links relative rather than
+pointing at files the repository does not carry. `GIT_PUBLISH_EXTRA` adds
+files at the root.
 
 What the mirror does *not* touch is `GIT_PUBLISH_PRESERVE` (default `.git
 .gitignore .github LICENSE`): those belong to the published repository, not to

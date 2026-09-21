@@ -10,7 +10,7 @@ other metadata, not in its Makefile::
     pip-exclude = ["mycourse-internal"]
     pip-force-include = ["torchvision", "sentencepiece"]
     pip-relax = ["numpy", "torch"]
-    student-base-deps = ["cached-hub>=0.3.0"]
+    student-base-deps = ["cs-lab>=1.0"]
     student-requires-python = ">=3.10, <3.12"
     student-env-name = "tp-student-env"
 

@@ -153,7 +153,7 @@ def test_teacher_puts_each_variant_in_its_own_subdirectory(tmp_path):
 
 def test_solution_puts_each_variant_in_its_own_subdirectory(tmp_path):
     course = _course(tmp_path, names=("tp1",))
-    _make(course, "solution")
+    _make(course, "solution", "PUBLISH_SOLUTIONS=yes")
 
     assert (course / "solution" / "local" / "tp1.ipynb").is_file()
     assert (course / "solution" / "colab" / "tp1.ipynb").is_file()
@@ -270,22 +270,30 @@ def test_touching_a_source_rebuilds_only_its_variants(tmp_path):
 
 def test_editing_an_inlined_module_rebuilds_every_variant(tmp_path):
     """The depfile names the course's own paths, solutions under student/ too."""
-    course = _course(tmp_path, names=("tp1",), makefile_head="SOLUTION_DIR := student/solution\n")
+    course = _course(
+        tmp_path, names=("tp1",), makefile_head="SOLUTION_DIR := student/solution\n"
+    )
     (course / "src").mkdir(exist_ok=True)
     (course / "src" / "helper.py").write_text("VALUE = 1\n")
     src = course / "sources" / "tp1.py"
     src.write_text(src.read_text() + "\n# %%\nfrom helper import VALUE\nprint(VALUE)\n")
-    _make(course, "teacher", "solution")
+    _make(course, "teacher", "solution", "PUBLISH_SOLUTIONS=yes")
 
     depfile = (course / ".deps" / "tp1.d").read_text()
-    for path in ("teacher/local/", "student/solution/local/", "student/solution/colab/"):
+    for path in (
+        "teacher/local/",
+        "student/solution/local/",
+        "student/solution/colab/",
+    ):
         assert f"{path}tp1.ipynb" in depfile.split(":", 1)[0]
 
-    before = (course / "student" / "solution" / "local" / "tp1.ipynb").stat().st_mtime_ns
+    before = (
+        (course / "student" / "solution" / "local" / "tp1.ipynb").stat().st_mtime_ns
+    )
     helper = course / "src" / "helper.py"
     helper.write_text("VALUE = 2\n")
     _age(helper, -2)
-    _make(course, "teacher", "solution")
+    _make(course, "teacher", "solution", "PUBLISH_SOLUTIONS=yes")
     after = (course / "student" / "solution" / "local" / "tp1.ipynb").stat().st_mtime_ns
     assert after != before
 
@@ -297,7 +305,13 @@ def test_editing_an_inlined_module_rebuilds_every_variant(tmp_path):
 
 def test_clean_removes_the_colab_subdirectories(tmp_path):
     course = _course(tmp_path, names=("tp1",))
-    _make(course, "teacher", "solution", "student/local/tp1.ipynb", "student/colab/tp1.ipynb")
+    _make(
+        course,
+        "teacher",
+        "solution",
+        "student/local/tp1.ipynb",
+        "student/colab/tp1.ipynb",
+    )
     _make(course, "clean")
 
     assert not (course / "teacher").exists()
@@ -360,7 +374,7 @@ def test_solution_bundle_ships_the_solution_notebooks(tmp_path):
     import zipfile
 
     course = _course(tmp_path, names=("tp1",), makefile_head=SOLUTION_MAKEFILE)
-    _make(course, "bundle")
+    _make(course, "bundle", "PUBLISH_SOLUTIONS=yes")
 
     with zipfile.ZipFile(course / "student" / "tp.zip") as student:
         student_nb = student.read("notebooks/tp1.ipynb").decode()
@@ -376,7 +390,7 @@ def test_solution_bundle_ships_the_solution_notebooks(tmp_path):
 
 def _rsync_line(course, *overrides):
     out = _make(course, "-n", "rsync", "SSH_HOST=h", "SSH_PATH=/p", *overrides)
-    (line,) = [l for l in out.stdout.splitlines() if l.startswith("rsync ")]
+    (line,) = [ln for ln in out.stdout.splitlines() if ln.startswith("rsync ")]
     return line
 
 
@@ -423,6 +437,90 @@ def test_manifest_lists_the_solutions_only_once_published(tmp_path):
         "path": "solution/local/tp1.ipynb",
         "solution": True,
     } in released["practicals"][0]["files"]
+
+
+# --------------------------------------------------------------------------
+# what is handed out: the sources' own `publish:` / `solution:` headers
+# --------------------------------------------------------------------------
+
+
+def _with_header(course, name, **keys):
+    """Give a source a percent header carrying those metadata keys."""
+    source = course / "sources" / f"{name}.py"
+    header = "".join(f"#     {key}: {value}\n" for key, value in keys.items())
+    source.write_text(
+        "# ---\n# jupyter:\n#   metadata:\n" + header + "# ---\n\n" + source.read_text()
+    )
+    _age(source)
+
+
+def test_an_unpublished_source_reaches_no_student_but_is_still_built(tmp_path):
+    course = _course(tmp_path, names=("tp1", "tp2"))
+    _with_header(course, "tp2", publish="no")
+
+    _make(course, "student/local/tp1.ipynb", "teacher")
+    _make(course, "student", "ZIP=")
+
+    assert (course / "student" / "local" / "tp1.ipynb").is_file()
+    assert not (course / "student" / "local" / "tp2.ipynb").exists()
+    assert not (course / "student" / "colab" / "tp2.ipynb").exists()
+    # held back from the students, not from the teacher — nor from `check`
+    assert (course / "teacher" / "local" / "tp2.ipynb").is_file()
+
+
+def test_holding_a_source_back_removes_the_notebook_it_already_built(tmp_path):
+    course = _course(tmp_path, names=("tp1", "tp2"))
+    _make(course, "student", "ZIP=")
+    assert (course / "student" / "local" / "tp2.ipynb").is_file()
+
+    _with_header(course, "tp2", publish="no")
+    _make(course, "student", "ZIP=")
+    assert not (course / "student" / "local" / "tp2.ipynb").exists()
+    assert not (course / "student" / "colab" / "tp2.ipynb").exists()
+
+
+def test_a_header_releases_one_corrige_early(tmp_path):
+    course = _course(tmp_path, names=("tp1", "tp2"), makefile_head=SOLUTION_MAKEFILE)
+    _with_header(course, "tp1", solution="yes")
+
+    # PUBLISH_SOLUTIONS is still `no`: it is only what a silent header means.
+    _make(course, "solution", "SOLUTION_ZIP=")
+    assert (course / "student" / "solution" / "local" / "tp1.ipynb").is_file()
+    assert not (course / "student" / "solution" / "local" / "tp2.ipynb").exists()
+
+    line = _rsync_line(course)
+    assert '--include "/solution/**"' in line
+
+
+def test_a_header_holds_one_corrige_back_when_the_course_releases_them(tmp_path):
+    course = _course(tmp_path, names=("tp1", "tp2"), makefile_head=SOLUTION_MAKEFILE)
+    _with_header(course, "tp2", solution="no")
+
+    _make(course, "solution", "SOLUTION_ZIP=", "PUBLISH_SOLUTIONS=yes")
+    assert (course / "student" / "solution" / "local" / "tp1.ipynb").is_file()
+    assert not (course / "student" / "solution" / "local" / "tp2.ipynb").exists()
+
+
+def test_the_manifest_follows_the_headers(tmp_path):
+    import json
+
+    course = _course(tmp_path, names=("tp1", "tp2"), makefile_head=SOLUTION_MAKEFILE)
+    _with_header(course, "tp1", solution="yes")
+    _with_header(course, "tp2", publish="no")
+
+    _make(course, "manifest", "MANIFEST=m.json")
+    listed = json.loads((course / "m.json").read_text())
+    assert [entry["id"] for entry in listed["practicals"]] == ["tp1"]
+    assert any(f.get("solution") for f in listed["practicals"][0]["files"])
+
+
+def test_show_selection_says_what_goes_out(tmp_path):
+    course = _course(tmp_path, names=("tp1", "tp2"))
+    _with_header(course, "tp2", publish="no")
+
+    out = _make(course, "show-selection").stdout
+    assert "tp1" in out and "published" in out
+    assert "held back" in out
 
 
 # --------------------------------------------------------------------------

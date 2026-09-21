@@ -88,7 +88,7 @@ def env_output_mode() -> Optional[OutputMode]:
 
 def default_output_mode() -> OutputMode:
     """Inline under a kernel, terminal otherwise."""
-    from jupytext_notebook_helper.notebook import is_notebook
+    from cs_lab import is_notebook
 
     return OutputMode.NOTEBOOK if is_notebook() else OutputMode.CONSOLE
 
