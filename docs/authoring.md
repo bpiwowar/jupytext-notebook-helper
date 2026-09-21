@@ -118,6 +118,16 @@ a hint is scaffolding for the student notebook, and next to the answer it would
 at best duplicate a line (`norm_a = ...` above `norm_a = np.linalg.norm(a)`)
 and at worst break the cell (`return ...` before the real `return`).
 
+It opens the block with `# Solution`, carrying the instruction when there is
+one, so a reader can tell the answer from the code that was given:
+
+```python
+def cosine(a, b):
+    # Solution (Return the cosine similarity of two vectors)
+    norm_a = np.linalg.norm(a)
+    return a @ b / (norm_a * np.linalg.norm(b))
+```
+
 `[[assert]]` also lives inside the block: its text replaces `'Not implemented
 yet'` in the assertion emitted at `[[/student]]`.
 

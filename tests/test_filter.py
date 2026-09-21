@@ -103,6 +103,19 @@ def test_assert_marker_kept_for_teacher_dropped_for_solution(tmp_path):
     assert "answer = 42" in solution
 
 
+def test_the_corrige_labels_each_solution_block(tmp_path):
+    """A reader has to be able to tell the answer from the given code."""
+    src = tmp_path / "sample.py"
+    src.write_text(SAMPLE)
+    solution = _text(_run(["--solution"], src))
+    assert "# Solution (implement the answer)" in solution
+    assert "[[student]]" not in solution  # the marker itself never leaks
+
+    src.write_text("# %%\n# [[student]]\nanswer = 42\n# [[/student]]\n")
+    bare = _text(_run(["--solution"], src))
+    assert "# Solution\n" in bare  # no instruction: just the label
+
+
 HINTS_NB = textwrap.dedent(
     """
     # %%
@@ -128,6 +141,7 @@ def test_hints_are_dropped_from_the_corrige(tmp_path):
     assert "think about the base case first" in student
 
     solution = _text(_run(["--solution"], src))
+    assert "# Solution (implement the answer)" in solution
     assert "return 42" in solution  # the real body is kept
     assert "return ..." not in solution  # ... but not the hint above it
     assert "x = 0" not in solution

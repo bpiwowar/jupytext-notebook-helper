@@ -99,6 +99,12 @@ moving from one to the other.
   it duplicated a line at best, and at worst made the corrigé *not run* —
   `return ...` before the real `return` returns `Ellipsis`, and `summ += ...`
   raises `TypeError`. A corrigé that cannot be executed is not a corrigé.
+- **Also:** the block now opens with `# Solution`, carrying its instruction
+  when it has one (`# [[student]] Fill in the update` →
+  `# Solution (Fill in the update)`, a bare `# [[student]]` → `# Solution`),
+  where the instruction used to be emitted alone and a bare marker emitted
+  nothing. The corrigé shows the answer next to code the student was given;
+  without a label the two are indistinguishable.
 - **Migration recipe:** rebuild (`make solution`). A block whose only content
   was hints — no solution line at all — now comes out empty, which is a syntax
   error: give it a body, or leave it as a `[[student]]`-only exercise with no

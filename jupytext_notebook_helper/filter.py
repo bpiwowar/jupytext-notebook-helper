@@ -675,10 +675,15 @@ def process(  # noqa: C901
                         # Keep original line with markers in teacher mode
                         lines.append(line)
                     elif solution_mode:
-                        # Solution kept below: show the instruction as a comment when
-                        # there is one, but never leak a bare [[STUDENT]] placeholder.
-                        if m.group(2):
-                            lines.append(f"{student_space}# {m.group(2)}\n")
+                        # Solution kept below, marked as such so a reader can tell
+                        # the answer from the surrounding given code; the block's
+                        # instruction, when it has one, goes with it.
+                        # group(2) is None for a bare `# [[student]]`.
+                        instruction = (m.group(2) or "").strip()
+                        lines.append(
+                            f"{student_space}# Solution"
+                            f"{f' ({instruction})' if instruction else ''}\n"
+                        )
                     else:
                         # In student mode, show instructions as comment
                         lines.append(
