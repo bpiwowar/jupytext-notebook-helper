@@ -56,7 +56,9 @@ def cosine(a, b):
 - `[[student]] … [[/student]]` — kept verbatim in the teacher version; in the
   student version the body is replaced by the instruction (as a comment) and an
   `assert False, 'Not implemented yet'`, so the notebook still parses and points
-  students at the work.
+  students at the work. Lines that should survive the blanking — scaffolding
+  code, comments guiding the work — are marked as *hints*; see
+  [Hints inside a `[[student]]` block](#hints-inside-a-student-block).
 - `[[remove]] … [[/remove]]` — instructor-only content stripped from everything
   handed out.
 - `[[assert]]`, `[[unindent]]`, and cell **tags** (`teacher`, `colab`,
@@ -67,6 +69,62 @@ def cosine(a, b):
 
 Because the source is just Python, it lints, formats, and diffs like any other
 file, and you never keep parallel copies in sync by hand.
+
+## Hints inside a `[[student]]` block
+
+Everything between `[[student]]` and `[[/student]]` is dropped from the student
+notebook — *including ordinary comments*. A line only survives if it carries a
+hint marker, `##` or `# >`: the marker is deleted and what follows is emitted at
+that spot, at the original indentation.
+
+```python
+def cosine(a, b):
+    # [[student]] Return the cosine similarity of two vectors
+    ## # normalise both vectors first
+    ## norm_a = ...
+    # this plain comment is not handed out
+    norm_a = np.linalg.norm(a)
+    return a @ b / (norm_a * np.linalg.norm(b))
+    # [[/student]]
+```
+
+The student gets:
+
+```python
+def cosine(a, b):
+    # Return the cosine similarity of two vectors
+    # normalise both vectors first
+    norm_a = ...
+    assert False, 'Not implemented yet'
+```
+
+`##` and `# >` are interchangeable; pick whichever reads better against your
+formatter. What comes after the marker is emitted **raw**, so:
+
+- **to leave code**, write the code: `## norm_a = ...`;
+- **to leave a comment**, keep the `#`: `## # normalise both vectors first` (or
+  `# ># normalise both vectors first`) — a bare `## normalise both vectors
+  first` lands in the notebook as a syntax error;
+- a marker on its own (`##`) emits a blank line, which is a cheap way to leave
+  room to type in.
+
+Two things to avoid: a hint must be on a **line of its own**, since the marker
+is matched at its *last* occurrence on the line (`y = 1 ## z = 2` becomes
+`y = 1 z = 2`, and `## a = 1 ## b = 2` becomes `## a = 1 b = 2`).
+
+The teacher version keeps hint lines exactly as written, markers and all. The
+`--solution` (*corrigé*) version un-comments the hints **and** keeps the real
+body, so a hint that duplicates a solution line appears twice there — write
+hints as scaffolding (`norm_a = ...`) or comments rather than as copies of the
+answer.
+
+`[[assert]]` also lives inside the block: its text replaces `'Not implemented
+yet'` in the assertion emitted at `[[/student]]`.
+
+```python
+    # [[student]] Return the cosine similarity of two vectors
+    # [[assert]] cosine() is not implemented yet
+```
 
 ## Imports in the build
 

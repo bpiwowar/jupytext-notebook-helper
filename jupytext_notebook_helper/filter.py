@@ -11,6 +11,7 @@ Process percent notebooks
 # [[assert]] Other assert instruction
 ...
 # >hint = 2
+## # a comment for the student
 # [[/student]]
 ```
 
@@ -18,9 +19,15 @@ by
 
 ```py3
 # Instructions
-assert False, "Not implemented yet"
 hint = 2
+# a comment for the student
+assert False, "Other assert instruction"
 ```
+
+Inside a `[[student]]` block only *hint* lines survive: `##` or `# >` marks
+one, the marker is dropped and the rest is emitted raw at that indentation
+(so leave the `#` in to hand out a comment). Everything else -- plain
+comments included -- is replaced by the assertion. See `docs/authoring.md`.
 
 (2) Removes [[remove]] ... [[/remove]] sections
 
