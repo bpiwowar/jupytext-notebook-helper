@@ -366,6 +366,89 @@ def test_pip_excluded_package_does_not_shadow_its_dependencies(tmp_path):
     assert "proj" not in pip_source
 
 
+def test_pip_relaxed_package_is_installed_without_a_pin(tmp_path):
+    """--pip-relax drops the version specifier but keeps the package: it is
+    still installed, and still listed in the per-notebook manifest."""
+    (tmp_path / "pyproject.toml").write_text(
+        textwrap.dedent(
+            """
+            [project]
+            name = 'proj'
+
+            [build-system]
+            requires = ["setuptools>=61", "swig"]
+            """
+        )
+    )
+    (tmp_path / "uv.lock").write_text(
+        textwrap.dedent(
+            """
+            version = 1
+
+            [[package]]
+            name = "proj"
+            version = "0.1.0"
+
+            [package.metadata]
+            requires-dist = [{ name = "numpy" }, { name = "torch" }]
+
+            [[package]]
+            name = "numpy"
+            version = "2.0.0"
+
+            [[package]]
+            name = "torch"
+            version = "2.8.0"
+
+            [[package]]
+            name = "setuptools"
+            version = "80.9.0"
+
+            [[package]]
+            name = "swig"
+            version = "4.3.1"
+            """
+        )
+    )
+    src = tmp_path / "sample.py"
+    src.write_text(
+        textwrap.dedent(
+            """
+            # %% tags=["pip"]
+
+            # %%
+            import numpy as np
+            import torch
+            """
+        ).lstrip()
+    )
+    depdir = tmp_path / "deps"
+    nb = _run(
+        [
+            "--uv-root",
+            str(tmp_path),
+            "--depdir",
+            str(depdir),
+            # NumPy spelled the other way round on purpose: matching is PEP 503.
+            "--pip-relax",
+            "NumPy,setuptools",
+        ],
+        src,
+    )
+    pip_source = next(
+        _cell_source(c) for c in nb["cells"] if "%pip install" in _cell_source(c)
+    )
+    assert "numpy\n" in pip_source or "numpy " in pip_source  # bare, no pin
+    assert "numpy==" not in pip_source
+    assert "torch==2.8.*" in pip_source  # the others keep theirs
+    # ... including on the `[build-system] requires` line
+    assert "setuptools==" not in pip_source
+    assert "swig==4.3.*" in pip_source
+    # A relaxed package is not an excluded one: the student environment still
+    # gets it.
+    assert "numpy" in (depdir / "sample.pkgs").read_text().split()
+
+
 def test_pip_keeps_imported_transitive_dependencies(tmp_path):
     """An imported package that is also a dependency of another imported package
     is pinned explicitly (not pruned): its locked version can matter."""

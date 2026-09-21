@@ -57,6 +57,8 @@ metadata:
 pip-force-include = ["sentencepiece", "torchvision"]
 # never pip-installed by students (inlined, editable, or instructor-only)
 pip-exclude = ["mycourse-internal"]
+# installed, but without a version pin (see below)
+pip-relax = ["numpy", "torch"]
 # added to the student environment whatever the notebooks import
 student-base-deps = ["cached-hub>=0.3.0"]
 student-env-name = "tp-mycourse"
@@ -66,6 +68,16 @@ student-requires-python = ">=3.10, <3.12"
 The table is read from the `pyproject.toml` under `ROOT` (the `--uv-root` the
 filter is given). Every key is optional and the matching make variable or
 command-line option still works, adding to the list rather than replacing it.
+
+`pip-relax` (`--pip-relax`) is not `pip-exclude`: the package is still
+installed and still listed in the student environment, it just loses its
+`==x.y.*` pin in the Colab cell. Use it for what the hosted runtime
+preinstalls and pins itself — pinning `numpy` or `torch` on Colab fights
+`google-colab`'s own resolution, and a pin one minor behind what the runtime
+ships triggers a full reinstall (for `torch`, gigabytes of CUDA wheels onto a
+CPU runtime). The relaxed name is matched PEP 503-style against the base name,
+so `numpy` also relaxes `gymnasium[mujoco]`-style entries by their base name,
+and it applies to `[build-system] requires` too.
 
 The student environment is generated from the union of the per-notebook package
 manifests plus that base, deduplicated **by project name, constrained

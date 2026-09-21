@@ -9,14 +9,16 @@ other metadata, not in its Makefile::
     [tool.jupytext-notebook-helper]
     pip-exclude = ["mycourse-internal"]
     pip-force-include = ["torchvision", "sentencepiece"]
+    pip-relax = ["numpy", "torch"]
     student-base-deps = ["cached-hub>=0.3.0"]
     student-requires-python = ">=3.10, <3.12"
     student-env-name = "tp-student-env"
 
 Every key is optional, and the corresponding make variable / command-line
 option still wins, so a Makefile that sets nothing behaves exactly as before.
-``pip-exclude``, ``pip-force-include`` and ``student-base-deps`` *add* to what
-the command line passes rather than replacing it.
+``pip-exclude``, ``pip-force-include``, ``pip-relax`` and
+``student-base-deps`` *add* to what the command line passes rather than
+replacing it.
 """
 
 from __future__ import annotations
@@ -47,6 +49,7 @@ class CourseConfig:
 
     pip_exclude: List[str] = field(default_factory=list)
     pip_force_include: List[str] = field(default_factory=list)
+    pip_relax: List[str] = field(default_factory=list)
     student_base_deps: List[str] = field(default_factory=list)
     student_env_name: str = DEFAULT_STUDENT_ENV_NAME
     student_requires_python: str = DEFAULT_STUDENT_REQUIRES_PYTHON
@@ -57,6 +60,7 @@ class CourseConfig:
 _KEYS = {
     "pip-exclude": ("pip_exclude", list),
     "pip-force-include": ("pip_force_include", list),
+    "pip-relax": ("pip_relax", list),
     "student-base-deps": ("student_base_deps", list),
     "student-env-name": ("student_env_name", str),
     "student-requires-python": ("student_requires_python", str),

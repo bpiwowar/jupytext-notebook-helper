@@ -118,7 +118,12 @@ INDEX_SOLUTION_LABEL  ?=
 # The manifest the page is built from: a build artifact, not for the server.
 INDEX_MANIFEST        ?= $(BUNDLE_DIR)/index-manifest.json
 # Passed to the filter for the Colab install cell; --uv-root tells it where
-# uv.lock/pyproject.toml live (relative to the build dir).
+# uv.lock/pyproject.toml live (relative to the build dir). Append
+# --pip-exclude / --pip-force-include to change *what* is installed, and
+# --pip-relax to keep a package on the line but without its `==x.y.*` pin
+# (for what the hosted runtime preinstalls and pins itself, e.g. numpy/torch
+# on Colab). The same lists can live in the course pyproject.toml, under
+# [tool.jupytext-notebook-helper].
 PIP_ARGS       ?= --uv-root $(ROOT)
 
 # `yes` unless BUNDLE_NOTEBOOKS says otherwise (no/false/0/off, any case).

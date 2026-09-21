@@ -92,6 +92,14 @@ RE_PRINT_HEADER = re.compile(r"""^print_header\s*\(\s*["'](.+?)["']\s*\)\s*$""")
 PIP_EXCLUDE = set()
 PIP_FORCE_INCLUDE = set()
 
+# Packages emitted in the install cell *without* a version specifier. They stay
+# in the install set (so the student environment still lists them); only the
+# `==x.y.*` pin is dropped, for packages the target runtime preinstalls and
+# pins itself — on Colab, pinning numpy or torch fights google-colab's own
+# resolution and drags in a whole reinstall. Fed by [tool.jupytext-notebook-helper]
+# pip-relax and/or the --pip-relax CLI option.
+PIP_RELAX = set()
+
 # Directory containing uv.lock / pyproject.toml (for the `pip` install cell).
 # Defaults to the current directory; override with --uv-root (e.g. when the
 # build runs from a sub-directory).
@@ -114,6 +122,11 @@ IMPORT_TO_PACKAGE = {
 
 def csv_list(string):
     return string.split(",")
+
+
+def normalized_package_name(name: str) -> str:
+    """PEP 503 normalisation: ``Impact_Index`` -> ``impact-index``."""
+    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def get_path(base_path: Path, path: Union[Path, str]):
@@ -181,6 +194,13 @@ parser.add_argument(
     help="packages to always emit in the install cell, e.g. runtime-only deps (csv)",
 )
 parser.add_argument(
+    "--pip-relax",
+    type=csv_list,
+    help="packages emitted in the install cell without a version constraint "
+    "(csv): typically the ones the hosted runtime preinstalls and pins itself "
+    "(numpy, torch, ...)",
+)
+parser.add_argument(
     "--uv-root",
     default=".",
     help="directory containing uv.lock / pyproject.toml (default: current dir)",
@@ -214,6 +234,10 @@ PIP_EXCLUDE |= set(_course_config.pip_exclude) | set(args.pip_exclude or [])
 PIP_FORCE_INCLUDE |= set(_course_config.pip_force_include) | set(
     args.pip_force_include or []
 )
+PIP_RELAX |= {
+    normalized_package_name(package)
+    for package in set(_course_config.pip_relax) | set(args.pip_relax or [])
+}
 
 # Resolves `from <internal> import ...` against src-root and inlines the needed
 # symbols (with their transitive dependencies) instead of importing them.
@@ -370,8 +394,7 @@ def get_install_set(
     # Match using PEP 503 normalization (case-insensitive, runs of -_. -> -) so
     # that e.g. the import `impact_index` resolves to the lock entry
     # `impact-index` without a hand-maintained mapping.
-    def _norm(name):
-        return re.sub(r"[-_.]+", "-", name).lower()
+    _norm = normalized_package_name
 
     norm_to_key = {_norm(k): k for k in all_packages}
     excluded = {_norm(p) for p in exclude}
@@ -515,6 +538,18 @@ def rewrite_cell_imports(source: str, imports: Imports, keep: bool = False) -> s
 pip_cells: List[dict] = []
 
 
+def version_spec(package: str, version: Optional[str]) -> str:
+    """The specifier to emit for `package` in the install cell.
+
+    Empty for a package on the relax list (`--pip-relax`), the locked
+    major.minor series otherwise.
+    """
+    # `gymnasium[mujoco]` is relaxed by naming `gymnasium`.
+    if normalized_package_name(package.split("[")[0]) in PIP_RELAX:
+        return ""
+    return relaxed_version_spec(version)
+
+
 def render_pip_cell(imports: Imports) -> str:
     """Render a `%pip install` cell from the (fully gathered) imports."""
     from jupytext_notebook_helper.uvutils import get_uv_versions
@@ -552,7 +587,7 @@ def render_pip_cell(imports: Imports) -> str:
     # easier to read. Versions are pinned to the minor series (`==x.y.*`), not
     # exactly, so patch updates are allowed.
     build_specs = [
-        f"{package}{relaxed_version_spec(version)}"
+        f"{package}{version_spec(package, version)}"
         for package, version in uv_info.build_packages.items()
         if package not in PIP_EXCLUDE
     ]
@@ -561,7 +596,7 @@ def render_pip_cell(imports: Imports) -> str:
         source += "\n# Installing main packages\n\n"
 
     main_specs = [
-        f"{package}{relaxed_version_spec(version)}"
+        f"{package}{version_spec(package, version)}"
         for package, version in uv_info.all_packages.items()
         # Extract base package name (without extras like [cuda])
         if package not in PIP_EXCLUDE
