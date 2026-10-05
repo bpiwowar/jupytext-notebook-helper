@@ -142,6 +142,11 @@ formatter. What comes after the marker is emitted **raw**, so:
   first` lands in the notebook as a syntax error;
 - a marker on its own (`##`) emits a blank line, which is a cheap way to leave
   room to type in.
+- **inside a nested block**, indent *after* `# >`: `# >    line = ...` is
+  emitted four spaces deeper than the marker. Write the marker itself at the
+  block's indentation, since formatters such as black re-indent comments to
+  the code that follows them. `##` swallows the blanks after it, so it cannot
+  do this.
 
 Two things to avoid: a hint must be on a **line of its own**, since the marker
 is matched at its *last* occurrence on the line (`y = 1 ## z = 2` becomes

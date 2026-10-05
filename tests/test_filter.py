@@ -149,6 +149,36 @@ def test_hints_are_dropped_from_the_corrige(tmp_path):
     assert "##" not in solution and "# >" not in solution  # no marker leaks
 
 
+NESTED_HINTS_NB = textwrap.dedent(
+    """
+    # %%
+    def answer():
+        # [[student]] implement the answer
+        # >with open("f") as f:
+        # >    # read the first line
+        # >    line = ...
+        # >
+        ##     flat = ...
+        with open("f") as f:
+            line = f.readline()
+        # [[/student]]
+    """
+).lstrip()
+
+
+def test_hint_keeps_the_indentation_after_the_marker(tmp_path):
+    """Black re-indents comments to the code that follows them, so a hint
+    nested in a block is written `# >    x`: the blanks after `# >` must
+    survive, or the block is left without a body."""
+    src = tmp_path / "sample.py"
+    src.write_text(NESTED_HINTS_NB)
+    student = _text(_run([], src))
+    assert '    with open("f") as f:\n        # read the first line\n' in student
+    assert "\n        line = ...\n" in student
+    assert "\n    flat = ...\n" in student  # `##` still swallows the blanks
+    compile(student, "student", "exec")
+
+
 # --------------------------------------------------------------------------- #
 # Automatic import gathering + internal inlining
 # --------------------------------------------------------------------------- #

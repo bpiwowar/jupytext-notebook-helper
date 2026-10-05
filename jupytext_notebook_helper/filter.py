@@ -59,7 +59,11 @@ re_student_start = re.compile(
     r"""^(\s*)#(?:.*)\[\[STUDENT\]\]\s*(\S.*\S)?\s*$""", re.IGNORECASE
 )
 re_student_end = re.compile(r""".*\[\[/STUDENT\]\]""", re.IGNORECASE)
-re_hint = re.compile(r"""(.*)(?:##(?:\s*)|# >)(\S.*|)$""", re.IGNORECASE)
+#: A hint marker and what follows it. `##` swallows the blanks after it; `# >`
+#: keeps them, so `# >    x = ...` emits `x = ...` one level deeper than the
+#: marker -- the only way to hint inside a nested block, since formatters such
+#: as black re-indent comments to the code that follows them.
+re_hint = re.compile(r"""(.*)(?:##\s*|# >)(.*)$""", re.IGNORECASE)
 re_assert = re.compile(r"""^(\s*)#(?:.*)\[\[assert\]\]\s*(\S.*)$""", re.IGNORECASE)
 
 re_remove_start = re.compile(r""".*\[\[REMOVE\]\]""", re.IGNORECASE)
