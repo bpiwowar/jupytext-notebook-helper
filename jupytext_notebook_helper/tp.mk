@@ -62,6 +62,14 @@
 
 # ---- configurable variables (override before the include) ----
 SOURCES_DIR    ?= sources
+# The course order of the practicals, as source names separated by blanks:
+# what the manifest, the index page and `outline` follow. Empty: the file
+# names' order (01-..., 02-...). A course whose sources carry no number reads
+# it from wherever it keeps its schedule, e.g. a file shared with its slides.
+# Sources it does not name come last; `check-order` (run by `check` when ORDER
+# is set) reports them, as an error with ORDER_STRICT=yes.
+ORDER          ?=
+ORDER_STRICT   ?=
 DESTDIR_TP     ?= ../static/tp
 TEACHER_DIR    ?= teacher
 SOLUTION_DIR   ?= solution
@@ -196,8 +204,9 @@ NAMES         := $(patsubst $(SOURCES_DIR)/%.py,%,$(PY_NOTEBOOKS))
 # $(NAMES) stays the whole of $(SOURCES_DIR): the teacher notebooks and
 # `check` cover every source, published or not. A practical held back must not
 # be a practical left to rot.
+ORDER_ARGS = $(if $(strip $(ORDER)),--order "$(strip $(ORDER))")
 SELECT := $(PYTHON) python -m jupytext_notebook_helper.selection \
-	--sources $(SOURCES_DIR) --solutions-default $(if $(SOLUTIONS_PUBLISHED),yes,no)
+	--sources $(SOURCES_DIR) $(ORDER_ARGS) --solutions-default $(if $(SOLUTIONS_PUBLISHED),yes,no)
 SELECTION       := $(shell $(SELECT) --format tags)
 PUBLISHED_NAMES := $(patsubst P:%,%,$(filter P:%,$(SELECTION)))
 SOLUTION_NAMES  := $(patsubst S:%,%,$(filter S:%,$(SELECTION)))
@@ -595,6 +604,18 @@ show-run:
 	printf "  %-28s %-6s %d min %02d s  (profile $(RUN_PROFILE_LABEL))\n" \
 		"total" "" "$$(( total / 60 ))" "$$(( total % 60 ))"
 
+# ---- check-order: ORDER vs. the sources ----------------------------------
+# A name in ORDER with no source is an error (a typo, or a practical renamed
+# on one side only); a source ORDER does not name is a warning, or an error
+# with ORDER_STRICT=yes. Only defined when ORDER is set; `check` then depends
+# on it.
+ifneq ($(strip $(ORDER)),)
+.PHONY: check-order
+check-order:
+	@$(SELECT) --format check-order $(if $(ORDER_STRICT),--strict)
+check: check-order
+endif
+
 # ---- check-resources: the declared Hub resources vs. what the sources load --
 # Only defined when the course points RESOURCES_PY at a cs-lab declaration
 # module (e.g. src/mycourse/resources.py); `check` then depends on it.
@@ -878,7 +899,7 @@ MANIFEST_SOLUTION_ARGS = --solution-subdir "$(SOLUTION_REL_DIR)" \
 # What describes the practicals, whoever the reader is. `manifest` adds the
 # base URL of its own reader; `index` (below) writes the same list for a reader
 # sitting in $(DESTDIR_TP) itself, so it adds nothing.
-MANIFEST_COMMON_ARGS = --sources $(SOURCES_DIR) --local-subdir "$(LOCAL_SUBDIR)" \
+MANIFEST_COMMON_ARGS = --sources $(SOURCES_DIR) $(ORDER_ARGS) --local-subdir "$(LOCAL_SUBDIR)" \
 	--colab-subdir "$(COLAB_SUBDIR)" --name-key "$(MANIFEST_NAME_KEY)" \
 	--description-key "$(MANIFEST_DESCRIPTION_KEY)" \
 	--local-label "$(MANIFEST_LOCAL_LABEL)" \
@@ -958,7 +979,7 @@ OUTLINE_NAMES ?=
 .PHONY: outline
 outline:
 	@$(PYTHON) python -m jupytext_notebook_helper.outline \
-		--sources $(SOURCES_DIR) $(OUTLINE_NAMES)
+		--sources $(SOURCES_DIR) $(ORDER_ARGS) $(OUTLINE_NAMES)
 
 # ---- help -----------------------------------------------------------------
 # One section per kind of work. A course adds its own section by defining and
@@ -980,6 +1001,12 @@ define HELP_RESOURCES
                    $(SOURCES_DIR)/ (cs-lab cache check), then import it for real
                    and build every resource. Run by 'check'. A skeleton for a
                    new notebook: cs-lab cache scan $(SOURCES_DIR) --emit <section>
+endef
+
+define HELP_ORDER
+  check-order      check ORDER against $(SOURCES_DIR)/: a name with no source
+                   fails, a source it leaves out warns (fails with
+                   ORDER_STRICT=yes). Run by 'check'.
 endef
 
 define HELP_RSYNC
@@ -1022,6 +1049,7 @@ Build
                    with each [[student]]/[[assert]] marker nested under its
                    section — reads the sources only, builds no notebook.
                      OUTLINE_NAMES=<name> [<name> ...]  restrict to these
+                   In ORDER when the course sets it, else by file name.
   clean            remove generated notebooks, $(TEACHER_DIR)/, zip, $(DEPDIR), $(TESTED_DIR)
 
 What is handed out
@@ -1044,7 +1072,8 @@ Check the sources (run them as scripts, pass/fail)
   show-tests       last 'check' pass/fail per source
   show-raw         last 'check-raw' pass/fail per source
   check-bundle     verify the zip resolves with uv (no install)$(if $(RESOURCES_PY),
-$(HELP_RESOURCES))
+$(HELP_RESOURCES))$(if $(strip $(ORDER)),
+$(HELP_ORDER))
 
 Run the teacher notebooks (execute them, keep the result)
   run-teacher      every teacher notebook through Jupyter, at profile

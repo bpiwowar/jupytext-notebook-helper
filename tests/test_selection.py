@@ -110,3 +110,56 @@ def test_sources_are_sorted(tmp_path):
         "02-earlier.py",
         "10-later.py",
     ]
+
+
+def test_an_order_puts_its_names_first_and_the_rest_by_file_name(tmp_path):
+    for name in ("attention.py", "dpo.py", "intro.py", "zoo.py"):
+        write(tmp_path, name)
+    ordered = selection.sources(Path(tmp_path), "intro attention nope intro")
+    assert [path.stem for path in ordered] == ["intro", "attention", "dpo", "zoo"]
+
+
+def test_an_order_may_be_a_list(tmp_path):
+    for name in ("a.py", "b.py"):
+        write(tmp_path, name)
+    assert [p.stem for p in selection.sources(Path(tmp_path), ["b", "a"])] == ["b", "a"]
+
+
+def test_select_follows_the_order(tmp_path):
+    write(tmp_path, "a.py", solution="yes")
+    write(tmp_path, "b.py", solution="yes")
+    published, solutions = selection.select(
+        Path(tmp_path), solutions_default=False, order="b a"
+    )
+    assert [p.stem for p in published] == ["b", "a"]
+    assert [p.stem for p in solutions] == ["b", "a"]
+
+
+def test_order_problems_reports_both_sides(tmp_path):
+    for name in ("a.py", "b.py"):
+        write(tmp_path, name)
+    assert selection.order_problems(Path(tmp_path), "a ghost") == (["ghost"], ["b"])
+
+
+def test_check_order_fails_on_an_unknown_name(tmp_path, capsys):
+    write(tmp_path, "a.py")
+    args = ["--sources", str(tmp_path), "--format", "check-order"]
+    assert selection.main(args + ["--order", "a ghost"]) == 1
+    assert "error: ghost" in capsys.readouterr().err
+
+
+def test_check_order_warns_on_an_unlisted_source_unless_strict(tmp_path, capsys):
+    write(tmp_path, "a.py")
+    write(tmp_path, "b.py")
+    args = ["--sources", str(tmp_path), "--format", "check-order", "--order", "a"]
+    assert selection.main(args) == 0
+    assert "warning: b" in capsys.readouterr().err
+    assert selection.main(args + ["--strict"]) == 1
+    assert "error: b" in capsys.readouterr().err
+
+
+def test_the_tags_follow_the_order(tmp_path, capsys):
+    write(tmp_path, "a.py")
+    write(tmp_path, "b.py")
+    selection.main(["--sources", str(tmp_path), "--order", "b a"])
+    assert capsys.readouterr().out.split() == ["P:b", "P:a"]

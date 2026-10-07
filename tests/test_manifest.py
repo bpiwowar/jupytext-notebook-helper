@@ -91,6 +91,22 @@ def test_build_lists_every_source_sorted(tmp_path):
     ]
 
 
+def test_build_follows_the_course_order(tmp_path):
+    write(tmp_path, "lora-sft.py", HEADER)
+    write(tmp_path, "dpo.py", "# %%\n")
+    built = manifest.build(
+        sources_dir=tmp_path,
+        local_subdir="local",
+        colab_subdir="colab",
+        local_label="Notebook",
+        colab_label="Colab",
+        name_key="practical_name",
+        url="../lab/",
+        order="lora-sft dpo",
+    )
+    assert [p["id"] for p in built["practicals"]] == ["lora-sft", "dpo"]
+
+
 def test_write_if_changed_leaves_an_identical_file_alone(tmp_path):
     output = tmp_path / "practicals.json"
     built = {"version": 1, "baseUrl": "", "practicals": []}

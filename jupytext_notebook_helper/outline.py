@@ -38,6 +38,8 @@ RE_STUDENT_START = re.compile(
 )
 RE_ASSERT = re.compile(r"""^(?:\s*)#(?:.*)\[\[assert\]\]\s*(\S.*)$""", re.IGNORECASE)
 
+from jupytext_notebook_helper import selection
+
 #: Header level synthesized for a `print_header(...)` call (matches the `###`
 #: the filter turns it into — see `filter.RE_PRINT_HEADER`).
 PRINT_HEADER_LEVEL = 3
@@ -99,6 +101,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--sources", type=Path, default=Path("sources"))
     parser.add_argument(
+        "--order",
+        default="",
+        help="the course order, as source names separated by blanks "
+        "(default: file name order)",
+    )
+    parser.add_argument(
         "names", nargs="*", help="restrict to these notebooks (source stems)"
     )
     parser.add_argument("--output", type=Path, help="write to a file instead of stdout")
@@ -107,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.sources.is_dir():
         raise SystemExit(f"outline: no sources directory at {args.sources}")
 
-    sources = sorted(args.sources.glob("*.py"))
+    sources = selection.sources(args.sources, args.order)
     if args.names:
         wanted = set(args.names)
         sources = [s for s in sources if s.stem in wanted]

@@ -77,6 +77,14 @@ def test_main_lists_every_source_sorted(tmp_path, capsys):
     assert out.index("dpo (0 headers, 0 student tasks)") < out.index("lora-sft (")
 
 
+def test_main_follows_the_course_order(tmp_path, capsys):
+    write(tmp_path, "lora-sft.py", SOURCE)
+    write(tmp_path, "dpo.py", "# %%\nprint(1)\n")
+    assert outline.main(["--sources", str(tmp_path), "--order", "lora-sft dpo"]) == 0
+    out = capsys.readouterr().out
+    assert out.index("lora-sft (") < out.index("dpo (0 headers, 0 student tasks)")
+
+
 def test_main_can_restrict_to_named_notebooks(tmp_path, capsys):
     write(tmp_path, "lora-sft.py", SOURCE)
     write(tmp_path, "dpo.py", "# %%\nprint(1)\n")

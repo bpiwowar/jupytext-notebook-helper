@@ -29,6 +29,13 @@ its own header rather than in a list somewhere else that rots::
 
 ``tp.mk`` reads both lists in one go at parse time (``--format tags``), and
 ``make show-selection`` prints them for a human.
+
+The *order* of the practicals is not a property of one source, so it is not in
+the headers. By default it is the file names' (``01-intro.py`` before
+``02-...``); a course that names its sources without numbers passes the order
+instead (``ORDER`` in ``tp.mk``, ``--order`` here) — typically read from a
+course file it shares with its slides. Sources it does not name come after,
+by file name; ``--format check-order`` reports both kinds of mismatch.
 """
 
 from __future__ import annotations
@@ -98,17 +105,52 @@ def has_solution(source: Path, *, default: bool) -> bool:
     return is_published(source) and flag(source, SOLUTION_KEY, default=default)
 
 
-def sources(sources_dir: Path) -> List[Path]:
-    """Every source of the course, in the order the practicals are numbered."""
-    return sorted(Path(sources_dir).glob("*.py"))
+def parse_order(order: Optional[str | Sequence[str]]) -> List[str]:
+    """``--order`` as a list of names: one string split on blanks, or a list."""
+    if not order:
+        return []
+    if isinstance(order, str):
+        return order.split()
+    return [name for item in order for name in item.split()]
+
+
+def sources(
+    sources_dir: Path, order: Optional[str | Sequence[str]] = None
+) -> List[Path]:
+    """Every source of the course, in course order.
+
+    The names in ``order`` come first, in that order (a name with no source is
+    skipped — see :func:`order_problems`); the other sources follow by file
+    name, which is the whole order when none is given.
+    """
+    by_name = {path.stem: path for path in sorted(Path(sources_dir).glob("*.py"))}
+    ordered = [
+        by_name[name] for name in dict.fromkeys(parse_order(order)) if name in by_name
+    ]
+    listed = {path.stem for path in ordered}
+    return ordered + [path for name, path in by_name.items() if name not in listed]
+
+
+def order_problems(
+    sources_dir: Path, order: Optional[str | Sequence[str]]
+) -> Tuple[List[str], List[str]]:
+    """Names the order gives with no source, and sources it does not name."""
+    names = parse_order(order)
+    stems = [path.stem for path in sorted(Path(sources_dir).glob("*.py"))]
+    unknown = [name for name in dict.fromkeys(names) if name not in stems]
+    unlisted = [stem for stem in stems if stem not in names]
+    return unknown, unlisted
 
 
 def select(
-    sources_dir: Path, *, solutions_default: bool
+    sources_dir: Path,
+    *,
+    solutions_default: bool,
+    order: Optional[str | Sequence[str]] = None,
 ) -> Tuple[List[Path], List[Path]]:
     """The published sources, and those releasing their corrigé."""
     published, solutions = [], []
-    for source in sources(sources_dir):
+    for source in sources(sources_dir, order):
         if not is_published(source):
             continue
         published.append(source)
@@ -135,17 +177,55 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "(the course's PUBLISH_SOLUTIONS; default: no)",
     )
     parser.add_argument(
+        "--order",
+        default="",
+        help="the course order, as source names separated by blanks; sources "
+        "it does not name come after, by file name (default: file name order)",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="with --format check-order: a source the order does not name is "
+        "an error, not a warning",
+    )
+    parser.add_argument(
         "--format",
-        choices=("tags", "published", "solutions", "held-back", "report"),
+        choices=(
+            "tags",
+            "published",
+            "solutions",
+            "held-back",
+            "report",
+            "check-order",
+        ),
         default="tags",
-        help="tags: `P:<name>` / `S:<name>` tokens, for make; the others print "
-        "one name per line (report: a human-readable summary)",
+        help="tags: `P:<name>` / `S:<name>` tokens, for make; check-order: "
+        "compare --order with the sources; the others print one name per line "
+        "(report: a human-readable summary)",
     )
     args = parser.parse_args(argv)
 
-    all_sources = sources(args.sources)
+    if args.format == "check-order":
+        unknown, unlisted = order_problems(args.sources, args.order)
+        for name in unknown:
+            print(  # noqa: T201
+                f"error: {name} is in the course order but there is no "
+                f"{args.sources / (name + '.py')}",
+                file=sys.stderr,
+            )
+        for name in unlisted:
+            print(  # noqa: T201
+                f"{'error' if args.strict else 'warning'}: {name} is not in the "
+                "course order (it comes last, by file name)",
+                file=sys.stderr,
+            )
+        return 1 if unknown or (args.strict and unlisted) else 0
+
+    all_sources = sources(args.sources, args.order)
     published, solutions = select(
-        args.sources, solutions_default=args.solutions_default == "yes"
+        args.sources,
+        solutions_default=args.solutions_default == "yes",
+        order=args.order,
     )
     published_stems = set(_stems(published))
     held_back = [source for source in all_sources if source.stem not in published_stems]

@@ -178,13 +178,14 @@ def build(
     solution_colab_label: str = "Solution (Colab)",
     solutions_default: bool = True,
     colab_url_prefix: str | None = None,
+    order: str | list[str] | None = None,
 ) -> dict[str, Any]:
     # Each source's own header says whether it is handed out, and whether its
     # corrigé goes with it (see :mod:`jupytext_notebook_helper.selection`). A
     # practical held back is absent from the manifest altogether: what is not
     # announced is exactly what `rsync` does not deploy.
     practicals = []
-    for source in selection.sources(sources_dir):
+    for source in selection.sources(sources_dir, order):
         if not selection.is_published(source):
             continue
         stem = source.stem
@@ -260,6 +261,12 @@ def main(argv: list[str] | None = None) -> int:
         description="Write a JSON description of the practicals",
     )
     parser.add_argument("--sources", type=Path, default=Path("sources"))
+    parser.add_argument(
+        "--order",
+        default="",
+        help="the course order, as source names separated by blanks "
+        "(default: file name order)",
+    )
     parser.add_argument(
         "--local-subdir",
         default="local",
@@ -345,6 +352,7 @@ def main(argv: list[str] | None = None) -> int:
 
     manifest = build(
         sources_dir=args.sources,
+        order=args.order,
         local_subdir=args.local_subdir.strip("/"),
         colab_subdir=args.colab_subdir,
         local_label=args.local_label,

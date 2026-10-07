@@ -158,6 +158,24 @@ at all (see [Writing a source](authoring.md#what-is-handed-out)):
 `make show-selection` prints what that adds up to: which practicals go out,
 which of them with their corrigé, and which are held back.
 
+## Course order: `ORDER`
+
+The manifest, the index page and `make outline` list the practicals by file
+name, which is the course order when the names carry a number
+(`01-intro.py`, `02-...`). A course whose sources are named without one gives
+the order instead, as source names separated by blanks — typically read from
+the file where it keeps its schedule, so that the slides and the practicals
+share one list. Set it before the include:
+
+```make
+ORDER := $(shell uv run python scripts/course_order.py ../course.yaml)
+include $(shell uv run python -m jupytext_notebook_helper.tpmk)
+```
+
+Sources `ORDER` does not name come last, by file name. Setting it also defines
+`check-order`, which `check` runs: a name with no source fails, a source left
+out warns — or fails too, with `ORDER_STRICT := yes`.
+
 ## Deployment: `make rsync`
 
 Setting `SSH_HOST` defines `rsync`, which builds `student` and copies
