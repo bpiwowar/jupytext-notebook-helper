@@ -45,6 +45,11 @@ endef
 export HELP_PROJECT
 ```
 
+On a terminal the help is coloured (section titles in bold, targets in cyan),
+unless `NO_COLOR` is set; `HELP_COLOR=yes|no` forces it either way. The
+`HELP_PROJECT` section gets the same treatment, so write it in the same shape:
+a title line, then `  target   description` lines.
+
 ### Course settings in `pyproject.toml`
 
 Which packages the Colab install cell and the student environment carry is
@@ -175,6 +180,31 @@ include $(shell uv run python -m jupytext_notebook_helper.tpmk)
 Sources `ORDER` does not name come last, by file name. Setting it also defines
 `check-order`, which `check` runs: a name with no source fails, a source left
 out warns — or fails too, with `ORDER_STRICT := yes`.
+
+`make outline` can also list the practicals under headings — the lecture
+each one goes with, say. `OUTLINE_GROUPS` names a JSON file, a list of groups
+in order; a name may be `{"id": ..., "optional": true}`, shown as optional,
+and a source no group names comes last, under "Other practicals":
+
+```json
+[{"title": "Lecture 3: Efficient LLMs",
+  "names": ["lora", {"id": "inference-cost", "optional": true}]}]
+```
+
+When the course generates that file from its schedule, it adds the rule as a
+prerequisite of `outline`:
+
+```make
+OUTLINE_GROUPS := .deps/outline-groups.json
+include $(shell uv run python -m jupytext_notebook_helper.tpmk)
+
+outline: $(OUTLINE_GROUPS)
+$(OUTLINE_GROUPS): ../course.yaml scripts/course_order.py
+	@mkdir -p $(@D)
+	@uv run python scripts/course_order.py --groups $< > $@
+```
+
+The outline is coloured on a terminal too (`NO_COLOR` turns it off).
 
 ## Deployment: `make rsync`
 

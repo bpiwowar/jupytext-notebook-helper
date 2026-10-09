@@ -974,12 +974,17 @@ $(INDEX_HTML): $(PY_NOTEBOOKS) $(INDEX_INTRO) $(INDEX_ZIPS)
 # student. Reads the sources only, builds nothing.
 # `make outline OUTLINE_NAMES=<name>` (or several, space-separated) restricts
 # it to those notebooks; not called NAMES, which already lists every source.
+# OUTLINE_GROUPS, a JSON file, lists them under headings instead (the lecture
+# each one goes with, say — see jupytext_notebook_helper/outline.py). A course
+# that generates it adds the rule as a prerequisite: `outline: $(OUTLINE_GROUPS)`.
 OUTLINE_NAMES ?=
+OUTLINE_GROUPS ?=
 
 .PHONY: outline
 outline:
 	@$(PYTHON) python -m jupytext_notebook_helper.outline \
-		--sources $(SOURCES_DIR) $(ORDER_ARGS) $(OUTLINE_NAMES)
+		--sources $(SOURCES_DIR) $(ORDER_ARGS) \
+		$(if $(OUTLINE_GROUPS),--groups $(OUTLINE_GROUPS)) $(OUTLINE_NAMES)
 
 # ---- help -----------------------------------------------------------------
 # One section per kind of work. A course adds its own section by defining and
@@ -1113,12 +1118,27 @@ Sources: $(NAMES)
 endef
 export HELP_FOOTER
 
+# Colours, when the output is a terminal and NO_COLOR is unset
+# (https://no-color.org): a section title in bold, a target (or variable) in
+# cyan, a "Label:" in bold. HELP_COLOR=yes|no forces it either way.
+HELP_COLOR ?= auto
+define HELP_AWK
+/^[^ ]/ { if (match($$0, /^[^:]+:/)) print b substr($$0, 1, RLENGTH) r substr($$0, RLENGTH + 1); else print b $$0 r; next }
+/^  [^ ]/ { t = substr($$0, 3); n = index(t, "  "); if (!n) n = index(t " ", " "); print "  " c substr(t, 1, n - 1) r substr(t, n); next }
+{ print }
+endef
+export HELP_AWK
+
 .PHONY: help
 help:
-	@echo "Practicals (jupytext-notebook-helper) — make targets"
-	@printf '%s\n' "$$HELP_TEXT"
-	@[ -z "$$HELP_PROJECT" ] || printf '\n%s\n' "$$HELP_PROJECT"
-	@printf '%s\n' "$$HELP_FOOTER"
+	@if [ "$(HELP_COLOR)" = yes ] || { [ "$(HELP_COLOR)" = auto ] && [ -t 1 ] && [ -z "$$NO_COLOR" ]; }; then \
+		b=$$(printf '\033[1m'); c=$$(printf '\033[36m'); r=$$(printf '\033[0m'); \
+	else b=; c=; r=; fi; \
+	{ echo "Practicals (jupytext-notebook-helper) — make targets"; \
+	  printf '%s\n' "$$HELP_TEXT"; \
+	  [ -z "$$HELP_PROJECT" ] || printf '\n%s\n' "$$HELP_PROJECT"; \
+	  printf '%s\n' "$$HELP_FOOTER"; \
+	} | awk -v b="$$b" -v c="$$c" -v r="$$r" "$$HELP_AWK"
 
 # ---- bookkeeping ----
 # Auto-dependency files (listing the internal src/ modules inlined into each
