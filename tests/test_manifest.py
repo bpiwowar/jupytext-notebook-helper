@@ -323,3 +323,67 @@ def test_build_ignores_the_description_when_no_key_is_given(tmp_path):
         url="",
     )
     assert "description" not in built["practicals"][0]
+
+
+def _course_with_sheet(tmp_path, header=HEADER):
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    write(sources, "tp1.py", header)
+    write(sources, "tp2.py", header)
+    exercises = tmp_path / "exercises"
+    exercises.mkdir()
+    write(exercises, "tp1.typ", "= TD\n")
+    return sources, exercises
+
+
+def test_exercise_sheet_is_listed_after_the_notebooks(tmp_path):
+    sources, exercises = _course_with_sheet(tmp_path)
+    result = manifest.build(
+        sources_dir=sources,
+        local_subdir="local",
+        colab_subdir="colab",
+        local_label="Notebook",
+        colab_label="Colab",
+        name_key="practical_name",
+        url="",
+        solution_subdir="solution",
+        solutions_default=True,
+        exercises_dir=exercises,
+    )
+    by_id = {p["id"]: p for p in result["practicals"]}
+    labels = [f["label"] for f in by_id["tp1"]["files"]]
+    assert labels == [
+        "Notebook",
+        "Colab",
+        "Exercises (PDF)",
+        "Solution",
+        "Solution (Colab)",
+        "Exercises — solution (PDF)",
+    ]
+    sheet = by_id["tp1"]["files"][2]
+    assert sheet == {
+        "label": "Exercises (PDF)",
+        "path": "exercises/tp1.pdf",
+        "exercises": True,
+    }
+    assert by_id["tp1"]["files"][-1]["path"] == "solution/exercises/tp1.pdf"
+    # No sheet, no entry.
+    assert not any(f.get("exercises") for f in by_id["tp2"]["files"])
+
+
+def test_exercise_solution_follows_the_practical_selection(tmp_path):
+    sources, exercises = _course_with_sheet(tmp_path)
+    result = manifest.build(
+        sources_dir=sources,
+        local_subdir="local",
+        colab_subdir="colab",
+        local_label="Notebook",
+        colab_label="Colab",
+        name_key="practical_name",
+        url="",
+        solution_subdir="solution",
+        solutions_default=False,
+        exercises_dir=exercises,
+    )
+    files = result["practicals"][0]["files"]
+    assert [f["label"] for f in files if f.get("exercises")] == ["Exercises (PDF)"]

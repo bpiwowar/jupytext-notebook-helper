@@ -67,6 +67,12 @@ next to it::
 The name falls back to the file name, title-cased; a source without a
 description simply has no ``description`` key.
 
+A practical may come with a paper exercise sheet (a TD), written in Typst
+next to the sources: ``<exercises-dir>/<name>.typ`` (``--exercises-dir``).
+When it exists, its PDF is listed among the practical's files (``"exercises":
+true``), and its corrected version too when the corrigé of the practical is
+released (``"exercises": true, "solution": true``).
+
 This reads the headers only: no notebook is built, so it is cheap enough to run
 before every build of the consumer (`make manifest`).
 """
@@ -162,6 +168,33 @@ def colab_entry(label: str, path: str, url_prefix: str | None) -> dict[str, Any]
     return entry
 
 
+def exercise_entries(
+    stem: str,
+    *,
+    exercises_dir: Path | None,
+    subdir: str,
+    label: str,
+    solution_label: str,
+    solution_subdir: str | None,
+) -> list[dict[str, Any]]:
+    """The exercise-sheet files of a practical: none without a ``<stem>.typ``."""
+    if exercises_dir is None or not (exercises_dir / f"{stem}.typ").is_file():
+        return []
+    entries: list[dict[str, Any]] = [
+        {"label": label, "path": f"{subdir}/{stem}.pdf", "exercises": True}
+    ]
+    if solution_subdir:
+        entries.append(
+            {
+                "label": solution_label,
+                "path": f"{solution_subdir}/{subdir}/{stem}.pdf",
+                "exercises": True,
+                "solution": True,
+            }
+        )
+    return entries
+
+
 def build(
     *,
     sources_dir: Path,
@@ -179,6 +212,10 @@ def build(
     solutions_default: bool = True,
     colab_url_prefix: str | None = None,
     order: str | list[str] | None = None,
+    exercises_dir: Path | None = None,
+    exercises_subdir: str = "exercises",
+    exercises_label: str = "Exercises (PDF)",
+    exercises_solution_label: str = "Exercises — solution (PDF)",
 ) -> dict[str, Any]:
     # Each source's own header says whether it is handed out, and whether its
     # corrigé goes with it (see :mod:`jupytext_notebook_helper.selection`). A
@@ -216,6 +253,26 @@ def build(
                 )
                 entry["solution"] = True
                 files.append(entry)
+        # The sheet goes with the notebook it prepares, its corrigé with the
+        # other solutions.
+        sheets = exercise_entries(
+            stem,
+            exercises_dir=exercises_dir,
+            subdir=exercises_subdir,
+            label=exercises_label,
+            solution_label=exercises_solution_label,
+            solution_subdir=solution_subdir
+            if solution_subdir
+            and selection.has_solution(source, default=solutions_default)
+            else None,
+        )
+        first_solution = next(
+            (i for i, f in enumerate(files) if f.get("solution")), len(files)
+        )
+        files[first_solution:first_solution] = [
+            s for s in sheets if not s.get("solution")
+        ]
+        files.extend(s for s in sheets if s.get("solution"))
         entry: dict[str, Any] = {
             "id": stem,
             "name": display_name(source, name_key),
@@ -302,6 +359,21 @@ def main(argv: list[str] | None = None) -> int:
         "releases it (the course's PUBLISH_SOLUTIONS); a header always wins",
     )
     parser.add_argument(
+        "--exercises-dir",
+        type=Path,
+        help="directory of the Typst exercise sheets (<name>.typ); a practical "
+        "with one gets its PDF listed among its files",
+    )
+    parser.add_argument(
+        "--exercises-subdir",
+        default="exercises",
+        help="sub-directory the exercise PDFs are served from (default: exercises)",
+    )
+    parser.add_argument("--exercises-label", default="Exercises (PDF)")
+    parser.add_argument(
+        "--exercises-solution-label", default="Exercises — solution (PDF)"
+    )
+    parser.add_argument(
         "--name-key",
         default="practical_name",
         help="header key holding the display name (under jupyter.metadata)",
@@ -367,6 +439,10 @@ def main(argv: list[str] | None = None) -> int:
         solution_colab_label=args.solution_colab_label,
         solutions_default=args.solutions_default == "yes",
         colab_url_prefix=colab_url_prefix,
+        exercises_dir=args.exercises_dir,
+        exercises_subdir=args.exercises_subdir.strip("/"),
+        exercises_label=args.exercises_label,
+        exercises_solution_label=args.exercises_solution_label,
         url=base_url(
             given=args.base_url,
             deploy_path=args.deploy_path,

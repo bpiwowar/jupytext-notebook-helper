@@ -120,6 +120,7 @@ make check      # run every source, with the code students get
 | [Runtime helpers](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/runtime.md) | where output goes (`NOTEBOOK_OUTPUT`), and what belongs to [cs-lab](https://github.com/bpiwowar/cs-lab) instead: `hardware()` and the profile ladder |
 | [Checking and running](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/testing.md) | `check`, `check-raw`, `lab`, `run-teacher`, `check-resources` |
 | [Setting up a course](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/course-setup.md) | the `Makefile`, `[tool.jupytext-notebook-helper]`, bundles, solutions, `rsync`, the index page |
+| [Exercise sheets](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/docs/exercises.md) | paper exercise sheets (TD) in Typst, one per practical, with and without answers |
 | [Breaking changes](https://github.com/bpiwowar/jupytext-notebook-helper/blob/main/breaking.md) | what changed between major versions, and how to migrate |
 
 The header of `jupytext_notebook_helper/tp.mk` lists every configurable

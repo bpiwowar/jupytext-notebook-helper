@@ -55,6 +55,15 @@
 #     SOLUTION_DIR := $(DESTDIR_TP)/solution
 #     SOLUTION_ZIP := $(DESTDIR_TP)/tp-mycourse-uv-solution.zip
 #
+# A practical may come with a paper exercise sheet (a TD), written in Typst:
+#   $(EXERCISES_DIR)/<name>.typ -> $(DESTDIR_TP)/$(EXERCISES_SUBDIR)/<name>.pdf    student
+#                               -> $(TEACHER_DIR)/$(EXERCISES_SUBDIR)/<name>.pdf   with solutions
+#                               -> $(SOLUTION_DIR)/$(EXERCISES_SUBDIR)/<name>.pdf  with solutions (make solution)
+# The sheet reads `sys.inputs.solution` ("true"/"false") to show or hide its
+# answers; anything else in $(EXERCISES_DIR) (a shared template, figures) is a
+# dependency of every sheet. Same `publish:`/`solution:` selection as the
+# notebook it goes with. See docs/exercises.md.
+#
 # Cell-tag gating (in the sources): [[student]]..[[/student]] blanks solutions;
 # tags `teacher`, `colab`, `not-colab`. The Colab `%pip install` cell is inserted
 # automatically (before the first code cell) for the .colab variants; an empty
@@ -136,6 +145,13 @@ INDEX_STUDENT_LABEL   ?=
 INDEX_SOLUTION_LABEL  ?=
 # The manifest the page is built from: a build artifact, not for the server.
 INDEX_MANIFEST        ?= $(BUNDLE_DIR)/index-manifest.json
+# Paper exercise sheets (TD), one Typst file per practical: see docs/exercises.md.
+EXERCISES_DIR         ?= exercises
+EXERCISES_SUBDIR      ?= exercises
+TYPST                 ?= typst
+TYPST_ARGS            ?=
+MANIFEST_EXERCISES_LABEL          ?= Exercises (PDF)
+MANIFEST_EXERCISES_SOLUTION_LABEL ?= Exercises — solution (PDF)
 # Passed to the filter for the Colab install cell; --uv-root tells it where
 # uv.lock/pyproject.toml live (relative to the build dir). Append
 # --pip-exclude / --pip-force-include to change *what* is installed, and
@@ -221,6 +237,19 @@ TEACHER_LOCAL := $(NAMES:%=$(TEACHER_LOCAL_DIR)/%.ipynb)
 TEACHER_COLAB := $(NAMES:%=$(TEACHER_COLAB_DIR)/%.ipynb)
 SOLUTION_LOCAL := $(SOLUTION_NAMES:%=$(SOLUTION_LOCAL_DIR)/%.ipynb)
 SOLUTION_COLAB := $(SOLUTION_NAMES:%=$(SOLUTION_COLAB_DIR)/%.ipynb)
+# Exercise sheets: those of a known practical, following its selection. Every
+# other file under $(EXERCISES_DIR) (template, figures) is a shared dependency.
+EXERCISE_SOURCES   := $(wildcard $(EXERCISES_DIR)/*.typ)
+EXERCISE_ALL_NAMES := $(patsubst $(EXERCISES_DIR)/%.typ,%,$(EXERCISE_SOURCES))
+EXERCISE_NAMES     := $(filter $(NAMES),$(EXERCISE_ALL_NAMES))
+EXERCISE_ORPHANS   := $(filter-out $(NAMES),$(EXERCISE_ALL_NAMES))
+EXERCISE_DEPS      := $(if $(EXERCISE_SOURCES),$(filter-out $(EXERCISE_SOURCES),\
+                        $(shell find $(EXERCISES_DIR) -type f 2>/dev/null)))
+EXERCISE_PUBLISHED := $(filter $(PUBLISHED_NAMES),$(EXERCISE_NAMES))
+EXERCISE_SOLUTIONS := $(filter $(SOLUTION_NAMES),$(EXERCISE_NAMES))
+STUDENT_EXERCISES  := $(EXERCISE_PUBLISHED:%=$(DESTDIR_TP)/$(EXERCISES_SUBDIR)/%.pdf)
+TEACHER_EXERCISES  := $(EXERCISE_NAMES:%=$(TEACHER_DIR)/$(EXERCISES_SUBDIR)/%.pdf)
+SOLUTION_EXERCISES := $(EXERCISE_SOLUTIONS:%=$(SOLUTION_DIR)/$(EXERCISES_SUBDIR)/%.pdf)
 # Older output names, removed by `clean` so an upgraded checkout does not keep
 # serving stale notebooks: <name>.colab.ipynb (before 0.8) and <name>.ipynb at
 # the root of an output directory (before 2.0).
@@ -244,14 +273,15 @@ endif
 # otherwise would archive the env under a name that promises solutions.
 SOLUTION_ZIP_BUILT := $(if $(SOLUTIONS_RELEASED),$(SOLUTION_ZIP))
 
-# $(call prune_stale,<directory>,<names kept>): remove the notebooks of
+# $(call prune_stale,<directory>,<names kept>[,<extension>]): remove the files
+# (notebooks by default, `pdf` for the exercise sheets) of
 # practicals that directory is no longer meant to hold. A `publish: no` added
 # to a header is otherwise invisible — the file built last week stays on disk,
 # and rsync keeps serving it.
 define prune_stale
-	@for f in $(1)/*.ipynb; do \
+	@for f in $(1)/*.$(or $(3),ipynb); do \
 		[ -e "$$f" ] || continue; \
-		stem=$$(basename "$$f" .ipynb); \
+		stem=$$(basename "$$f" .$(or $(3),ipynb)); \
 		case " $(2) " in \
 			*" $$stem "*) ;; \
 			*) echo "  $$f: no longer handed out, removing"; rm -f "$$f";; \
@@ -263,12 +293,41 @@ all: student teacher
 student: $(STUDENT_LOCAL) $(STUDENT_COLAB) $(ZIP)
 	$(call prune_stale,$(STUDENT_LOCAL_DIR),$(PUBLISHED_NAMES))
 	$(call prune_stale,$(STUDENT_COLAB_DIR),$(PUBLISHED_NAMES))
+	$(if $(EXERCISE_SOURCES),$(call prune_stale,$(DESTDIR_TP)/$(EXERCISES_SUBDIR),$(EXERCISE_PUBLISHED),pdf))
 notebooks: student  # backward-compatible alias
 teacher: $(TEACHER_LOCAL) $(TEACHER_COLAB)
 solution: $(SOLUTION_LOCAL) $(SOLUTION_COLAB) $(SOLUTION_ZIP_BUILT)
 	$(call prune_stale,$(SOLUTION_LOCAL_DIR),$(SOLUTION_NAMES))
 	$(call prune_stale,$(SOLUTION_COLAB_DIR),$(SOLUTION_NAMES))
 bundle: $(ZIP) $(SOLUTION_ZIP_BUILT)
+
+# ---- exercise sheets (Typst) ------------------------------------------------
+# $(call typst_sheet,<true|false>): compile $< to $@, answers shown or not.
+# --root is the exercises directory, so a sheet imports its template with an
+# absolute path ("/lib/td.typ") whatever the directory make runs from.
+define typst_sheet
+	@mkdir -p $(@D)
+	$(TYPST) compile --root $(EXERCISES_DIR) --input solution=$(1) $(TYPST_ARGS) $< $@
+endef
+
+$(DESTDIR_TP)/$(EXERCISES_SUBDIR)/%.pdf: $(EXERCISES_DIR)/%.typ $(EXERCISE_DEPS)
+	$(call typst_sheet,false)
+$(TEACHER_DIR)/$(EXERCISES_SUBDIR)/%.pdf: $(EXERCISES_DIR)/%.typ $(EXERCISE_DEPS)
+	$(call typst_sheet,true)
+$(SOLUTION_DIR)/$(EXERCISES_SUBDIR)/%.pdf: $(EXERCISES_DIR)/%.typ $(EXERCISE_DEPS)
+	$(call typst_sheet,true)
+
+.PHONY: exercises check-exercises
+exercises: $(STUDENT_EXERCISES) $(TEACHER_EXERCISES)
+student: $(STUDENT_EXERCISES)
+teacher: $(TEACHER_EXERCISES)
+solution: $(SOLUTION_EXERCISES)
+
+# Both variants of every sheet compile; a sheet with no practical of the same
+# name is reported (it would be built for no one).
+check-exercises: $(TEACHER_EXERCISES) $(STUDENT_EXERCISES)
+	@$(if $(EXERCISE_ORPHANS),echo "WARNING: exercise sheets with no practical: $(EXERCISE_ORPHANS)" >&2,true)
+	@echo "Exercise sheets: $(words $(EXERCISE_NAMES)) compiled"
 
 # Each variant has its own directory, so the patterns below never compete.
 # Every recipe creates its own directory with `mkdir -p $(@D)`.
@@ -405,7 +464,7 @@ $(RESOLVED_DIR)/%.resolved: $(SOURCES_DIR)/%.py | $(RESOLVED_DIR)
 		&& (touch $@ && printf '\033[32m  PASS %s\033[0m\n' "$*") \
 		|| (touch $(RESOLVED_DIR)/$*.failed && printf '\033[31m  FAIL %s\033[0m\n' "$*")
 
-check: $(RESOLVED)
+check: $(RESOLVED) $(if $(EXERCISE_SOURCES),check-exercises)
 	@echo "Done — see 'make show-tests'"
 
 show-tests:
@@ -488,7 +547,7 @@ clean:
 	@rm -rf $(TEACHER_DIR) $(SOLUTION_DIR) $(DEPDIR) $(TESTED_DIR) $(RESOLVED_DIR) \
 		$(BUNDLE_DIR) $(STUDENT_ENV_DIR) $(STUDENT_LOCAL) $(STUDENT_COLAB) \
 		$(STUDENT_LOCAL_DIR) $(STUDENT_COLAB_DIR) $(LEGACY_OUTPUTS) $(ZIP) $(SOLUTION_ZIP) \
-		$(INDEX_HTML)
+		$(INDEX_HTML) $(DESTDIR_TP)/$(EXERCISES_SUBDIR)
 
 # ---- run-teacher: execute the teacher notebooks, and KEEP the result -------
 #
@@ -678,7 +737,8 @@ SOLUTION_REL_ZIP := $(call under_destdir,$(SOLUTION_ZIP))
 RSYNC_SOLUTION_PATTERNS := $(if $(SOLUTION_REL_DIR),/$(SOLUTION_REL_DIR)/ /$(SOLUTION_REL_DIR)/**) \
                            $(if $(SOLUTION_REL_ZIP),/$(SOLUTION_REL_ZIP))
 RSYNC_ARGS := $(foreach i,$(RSYNC_SOLUTION_PATTERNS),$(if $(SOLUTIONS_RELEASED),--include,--exclude) "$(i)") \
-              $(foreach i,$(RSYNC_INCLUDE) $(if $(RSYNC_DATA),data/ data/*),--include "$(i)")
+              $(foreach i,$(RSYNC_INCLUDE) $(if $(RSYNC_DATA),data/ data/*),--include "$(i)") \
+              $(if $(STUDENT_EXERCISES),--include "/$(EXERCISES_SUBDIR)/" --include "/$(EXERCISES_SUBDIR)/*.pdf")
 
 ifneq ($(strip $(SSH_HOST)),)
 .PHONY: rsync
@@ -896,6 +956,11 @@ MANIFEST_SOLUTION_ARGS = --solution-subdir "$(SOLUTION_REL_DIR)" \
 	--solution-colab-label "$(MANIFEST_SOLUTION_COLAB_LABEL)" \
 	--solutions-default $(if $(SOLUTIONS_PUBLISHED),yes,no)
 
+MANIFEST_EXERCISES_ARGS = --exercises-dir "$(EXERCISES_DIR)" \
+	--exercises-subdir "$(EXERCISES_SUBDIR)" \
+	--exercises-label "$(MANIFEST_EXERCISES_LABEL)" \
+	--exercises-solution-label "$(MANIFEST_EXERCISES_SOLUTION_LABEL)"
+
 # What describes the practicals, whoever the reader is. `manifest` adds the
 # base URL of its own reader; `index` (below) writes the same list for a reader
 # sitting in $(DESTDIR_TP) itself, so it adds nothing.
@@ -906,7 +971,8 @@ MANIFEST_COMMON_ARGS = --sources $(SOURCES_DIR) $(ORDER_ARGS) --local-subdir "$(
 	--colab-label "$(MANIFEST_COLAB_LABEL)" \
 	$(MANIFEST_COLAB_GIT_ARGS) \
 	$(MANIFEST_BUNDLE_ARGS) \
-	$(if $(SOLUTION_REL_DIR),$(MANIFEST_SOLUTION_ARGS))
+	$(if $(SOLUTION_REL_DIR),$(MANIFEST_SOLUTION_ARGS)) \
+	$(if $(EXERCISE_SOURCES),$(MANIFEST_EXERCISES_ARGS))
 
 .PHONY: manifest
 manifest:
@@ -952,7 +1018,7 @@ index: $(INDEX_HTML)
 # introduction does, or when an archive does (its size is on the page). The
 # page itself is only rewritten when its bytes change, so an unchanged course
 # leaves the file — and everything keyed off its timestamp — alone.
-$(INDEX_HTML): $(PY_NOTEBOOKS) $(INDEX_INTRO) $(INDEX_ZIPS)
+$(INDEX_HTML): $(PY_NOTEBOOKS) $(EXERCISE_SOURCES) $(INDEX_INTRO) $(INDEX_ZIPS)
 	@test -n "$(INDEX_TITLE)" || { \
 		echo "ERROR: INDEX_TITLE is not set — name the page, e.g."; \
 		echo "       INDEX_TITLE := Reinforcement learning — practicals"; \
@@ -1038,6 +1104,8 @@ Build
   solution         student-facing solution / corrigé (local + Colab, with
                    solutions, no instructor cells/markers/tag comments)$(if $(SOLUTION_ZIP),
                    + $(SOLUTION_ZIP))
+  exercises        the Typst exercise sheets of $(EXERCISES_DIR)/ (student + with
+                   solutions); also built by student / teacher / solution
   bundle           the uv-ready zip(s) only$(if $(BUNDLE_WITH_NOTEBOOKS),, (student: env only, no notebooks))
   all              student + teacher
   index            the hand-out page at $(INDEX_HTML): the archives to
@@ -1076,7 +1144,9 @@ Check the sources (run them as scripts, pass/fail)
   check-raw:<name> raw run of a single source
   show-tests       last 'check' pass/fail per source
   show-raw         last 'check-raw' pass/fail per source
-  check-bundle     verify the zip resolves with uv (no install)$(if $(RESOURCES_PY),
+  check-bundle     verify the zip resolves with uv (no install)
+  check-exercises  compile every exercise sheet, with and without solutions
+                   (run by 'check' when $(EXERCISES_DIR)/ has sheets)$(if $(RESOURCES_PY),
 $(HELP_RESOURCES))$(if $(strip $(ORDER)),
 $(HELP_ORDER))
 
