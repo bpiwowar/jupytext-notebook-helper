@@ -290,7 +290,9 @@ define prune_stale
 endef
 
 all: student teacher
-student: $(STUDENT_LOCAL) $(STUDENT_COLAB) $(ZIP)
+# No bundle while every practical is held back (`publish: no`): the student
+# env is derived from the published notebooks, and there are none yet.
+student: $(STUDENT_LOCAL) $(STUDENT_COLAB) $(if $(PUBLISHED_NAMES),$(ZIP))
 	$(call prune_stale,$(STUDENT_LOCAL_DIR),$(PUBLISHED_NAMES))
 	$(call prune_stale,$(STUDENT_COLAB_DIR),$(PUBLISHED_NAMES))
 	$(if $(EXERCISE_SOURCES),$(call prune_stale,$(DESTDIR_TP)/$(EXERCISES_SUBDIR),$(EXERCISE_PUBLISHED),pdf))
