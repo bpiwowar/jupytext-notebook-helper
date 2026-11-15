@@ -804,3 +804,46 @@ def test_manifest_colab_entries_open_in_colab_when_published_on_github(tmp_path)
         "https://colab.research.google.com/github/bpiwowar/course-lab/blob/main/"
         "colab/tp1.ipynb"
     )
+
+
+# --------------------------------------------------------------------------
+# practicals in development (DEV): held back, handed out by the dev targets
+# --------------------------------------------------------------------------
+
+
+def test_a_dev_practical_is_held_back_from_the_student_tree(tmp_path):
+    course = _course(tmp_path, makefile_head="DEV := tp2\n")
+    dry = _make(course, "-n", "student", "ZIP=").stdout
+    assert "student/local/tp1.ipynb" in dry
+    assert "student/local/tp2.ipynb" not in dry
+    # still a teacher notebook, like any practical held back
+    assert "teacher/local/tp2.ipynb" in _make(course, "-n", "teacher").stdout
+
+
+def test_stage_dev_hands_out_the_dev_practical_in_its_own_tree(tmp_path):
+    course = _course(tmp_path, makefile_head="DEV := tp2\n")
+    # the bundle needs `uv lock`: no zip here, to stay offline
+    _make(course, "stage-dev", "STAGE_DIR=site", "ZIP=")
+
+    for name in ("tp1", "tp2"):
+        assert (course / "student-dev" / "local" / f"{name}.ipynb").is_file()
+        assert (course / "site" / "colab" / f"{name}.ipynb").is_file()
+    # the production tree never sees it
+    assert not (course / "student" / "local" / "tp2.ipynb").exists()
+
+
+def test_rsync_dev_deploys_the_dev_tree_to_its_own_path(tmp_path):
+    course = _course(tmp_path, makefile_head="DEV := tp2\n")
+    out = _make(
+        course, "-n", "rsync-dev", "SSH_HOST=h", "SSH_PATH=/p", "SSH_PATH_DEV=/d"
+    )
+    commands = out.stdout.replace("\\\n", "")
+    (line,) = [ln for ln in commands.splitlines() if ln.startswith("rsync ")]
+    assert line.split()[-2:] == ["student-dev/", "h:/d"]
+    assert "student-dev/local/tp2.ipynb" in out.stdout
+
+
+def test_rsync_dev_needs_a_dev_path(tmp_path):
+    course = _course(tmp_path)
+    proc = _make(course, "-n", "rsync-dev", "SSH_HOST=h", "SSH_PATH=/p", check=False)
+    assert proc.returncode != 0

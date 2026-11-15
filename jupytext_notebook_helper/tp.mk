@@ -79,7 +79,23 @@ SOURCES_DIR    ?= sources
 # is set) reports them, as an error with ORDER_STRICT=yes.
 ORDER          ?=
 ORDER_STRICT   ?=
+# Practicals in development, as source names separated by blanks: held back
+# like a `publish: no` header (no student notebook, sheet nor corrigé), but
+# handed out by the development targets — `rsync-dev`, `stage-dev` — which
+# build a second student tree, $(DEV_DESTDIR_TP), with them in. A course that
+# keeps its schedule elsewhere reads them from there, as it does ORDER. The
+# manifest still lists them: the slides that link to them decide for
+# themselves what is in development.
+DEV            ?=
+# Set (to anything) by the development targets for the build they run: DEV is
+# then handed out like any other practical. Not meant to be set by hand.
+DEV_BUILD      ?=
 DESTDIR_TP     ?= ../static/tp
+# The student tree of the development build (see DEV), and where `rsync-dev`
+# deploys it. Its own directory, so that a development build never leaves a
+# practical in development in $(DESTDIR_TP).
+DEV_DESTDIR_TP ?= $(DESTDIR_TP)-dev
+SSH_PATH_DEV   ?=
 TEACHER_DIR    ?= teacher
 SOLUTION_DIR   ?= solution
 # Sub-directories (of each of the three output directories above) holding the
@@ -226,6 +242,11 @@ SELECT := $(PYTHON) python -m jupytext_notebook_helper.selection \
 SELECTION       := $(shell $(SELECT) --format tags)
 PUBLISHED_NAMES := $(patsubst P:%,%,$(filter P:%,$(SELECTION)))
 SOLUTION_NAMES  := $(patsubst S:%,%,$(filter S:%,$(SELECTION)))
+# DEV, held back unless this is the development build.
+ifeq ($(strip $(DEV_BUILD)),)
+PUBLISHED_NAMES := $(filter-out $(DEV),$(PUBLISHED_NAMES))
+SOLUTION_NAMES  := $(filter-out $(DEV),$(SOLUTION_NAMES))
+endif
 HELD_BACK_NAMES := $(filter-out $(PUBLISHED_NAMES),$(NAMES))
 # `yes` when at least one corrigé is released: what used to be
 # PUBLISH_SOLUTIONS alone now also depends on what the headers say.
@@ -549,7 +570,8 @@ clean:
 	@rm -rf $(TEACHER_DIR) $(SOLUTION_DIR) $(DEPDIR) $(TESTED_DIR) $(RESOLVED_DIR) \
 		$(BUNDLE_DIR) $(STUDENT_ENV_DIR) $(STUDENT_LOCAL) $(STUDENT_COLAB) \
 		$(STUDENT_LOCAL_DIR) $(STUDENT_COLAB_DIR) $(LEGACY_OUTPUTS) $(ZIP) $(SOLUTION_ZIP) \
-		$(INDEX_HTML) $(DESTDIR_TP)/$(EXERCISES_SUBDIR)
+		$(INDEX_HTML) $(DESTDIR_TP)/$(EXERCISES_SUBDIR) \
+		$(DEV_DESTDIR_TP) $(DEPDIR)-dev $(STUDENT_ENV_DIR)-dev $(BUNDLE_DIR)-dev
 
 # ---- run-teacher: execute the teacher notebooks, and KEEP the result -------
 #
@@ -752,6 +774,36 @@ rsync: student $(if $(SOLUTIONS_RELEASED),solution) $(RSYNC_DATA_LINK) $(RSYNC_I
 	@ssh $(SSH_HOST) mkdir -p $(SSH_PATH)
 	rsync --copy-unsafe-links -azv $(RSYNC_ARGS) --exclude "*" --delete-excluded \
 		$(DESTDIR_TP)/ $(SSH_HOST):$(SSH_PATH)
+endif
+
+# `stage`: the same tree as `rsync` deploys, copied to a local directory
+# (STAGE_DIR) instead — to look at the site before it goes out.
+STAGE_DIR ?=
+.PHONY: stage
+stage: student $(if $(SOLUTIONS_RELEASED),solution) $(RSYNC_DATA_LINK) $(RSYNC_INDEX)
+	@test -n "$(STAGE_DIR)" || { \
+		echo "ERROR: STAGE_DIR is not set — name the directory, e.g."; \
+		echo "       make stage STAGE_DIR=site/practical"; \
+		exit 1; }
+	@mkdir -p $(STAGE_DIR)
+	rsync --copy-unsafe-links -a $(RSYNC_ARGS) --exclude "*" --delete-excluded \
+		$(DESTDIR_TP)/ $(STAGE_DIR)/
+
+# The development targets: `rsync`/`stage` again, in a sub-make building
+# $(DEV_DESTDIR_TP) with DEV handed out. Its dependency files, student
+# environment and bundle staging get directories of their own, so that neither
+# build finds the other's there and takes it for up to date.
+DEV_MAKE = $(MAKE) DEV_BUILD=yes DESTDIR_TP=$(DEV_DESTDIR_TP) \
+	DEPDIR=$(DEPDIR)-dev STUDENT_ENV_DIR=$(STUDENT_ENV_DIR)-dev BUNDLE_DIR=$(BUNDLE_DIR)-dev
+
+.PHONY: stage-dev
+stage-dev:
+	+$(DEV_MAKE) stage STAGE_DIR="$(STAGE_DIR)"
+
+ifneq ($(and $(strip $(SSH_HOST)),$(strip $(SSH_PATH_DEV))),)
+.PHONY: rsync-dev
+rsync-dev:
+	+$(DEV_MAKE) rsync SSH_PATH=$(SSH_PATH_DEV)
 endif
 
 ifneq ($(strip $(SSH_STUDENT_DATA)),)
@@ -1087,6 +1139,11 @@ define HELP_RSYNC
                    (solutions too with PUBLISH_SOLUTIONS=yes, now: $(PUBLISH_SOLUTIONS))
 endef
 
+define HELP_RSYNC_DEV
+  rsync-dev        the same, DEV practicals too, built in $(DEV_DESTDIR_TP)/,
+                   to $(SSH_HOST):$(SSH_PATH_DEV)
+endef
+
 define HELP_RSYNC_DATA
   rsync-data       deploy $(STUDENT_DATA_DIR)/ to $(SSH_STUDENT_DATA)
 endef
@@ -1174,7 +1231,8 @@ Edit
                    figures still shown$(if $(or $(SSH_HOST),$(SSH_STUDENT_DATA),$(GIT_PUBLISH_URL)),
 
 Deploy)$(if $(SSH_HOST),
-$(HELP_RSYNC))$(if $(SSH_STUDENT_DATA),
+$(HELP_RSYNC))$(if $(and $(SSH_HOST),$(SSH_PATH_DEV)),
+$(HELP_RSYNC_DEV))$(if $(SSH_STUDENT_DATA),
 $(HELP_RSYNC_DATA))$(if $(GIT_PUBLISH_URL),
 $(HELP_PUBLISH_GIT))
 endef

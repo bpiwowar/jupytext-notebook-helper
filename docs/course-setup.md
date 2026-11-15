@@ -229,6 +229,31 @@ SSH_STUDENT_DATA      := ssh.example.org
 SSH_STUDENT_DATA_PATH := student-data/cache
 ```
 
+### Practicals in development: `DEV`, `rsync-dev`, `stage-dev`
+
+`DEV` lists the practicals that are not ready yet. They are held back as a
+`publish: no` header would hold them (no student notebook, exercise sheet or
+corrigé; still a teacher notebook, still `check`ed), but the development
+targets hand them out:
+
+```makefile
+DEV          := ranking-models evaluation
+SSH_PATH_DEV := public_html/mycourse-dev/practical
+```
+
+- `make rsync-dev` builds a second student tree, `$(DEV_DESTDIR_TP)` (default
+  `$(DESTDIR_TP)-dev`), with them in, and deploys it to
+  `$(SSH_HOST):$(SSH_PATH_DEV)`;
+- `make stage-dev STAGE_DIR=<dir>` copies that tree to a local directory
+  instead (and `make stage STAGE_DIR=<dir>` the production one) — to look at
+  the site before it goes out.
+
+The development build keeps its own dependency files, student environment and
+bundle staging (`$(DEPDIR)-dev`, …), so it never leaves a practical in
+development in `$(DESTDIR_TP)`. The manifest is not affected: it still lists
+the practicals in `DEV`, and the slides linking to them decide what is in
+development.
+
 ## The index page: `INDEX_TITLE`
 
 What a student opens is a directory listing: every `.ipynb`, the zip and the
