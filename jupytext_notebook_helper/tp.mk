@@ -305,8 +305,8 @@ bundle: $(ZIP) $(SOLUTION_ZIP_BUILT)
 
 # ---- exercise sheets (Typst) ------------------------------------------------
 # $(call typst_sheet,<true|false>): compile $< to $@, answers shown or not.
-# --root is the exercises directory, so a sheet imports its template with an
-# absolute path ("/lib/td.typ") whatever the directory make runs from.
+# --root is the exercises directory, so a sheet may import any file below it;
+# sheets use a relative path ("./lib/td.typ") so editor previews resolve it too.
 define typst_sheet
 	@mkdir -p $(@D)
 	$(TYPST) compile --root $(EXERCISES_DIR) --input solution=$(1) $(TYPST_ARGS) $< $@

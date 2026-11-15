@@ -45,15 +45,17 @@ sheet reads it from `sys.inputs`, typically in its template:
 
 ```typ
 // exercises/indexing.typ
-#import "/lib/td.typ": *
+#import "./lib/td.typ": *
 
 = Exercise 1
 Compute the idf of _house_.
 #solution[$log(100 \/ 4) approx 3.22$]
 ```
 
-Typst runs with `--root $(EXERCISES_DIR)`, so `/lib/td.typ` resolves to the
-template wherever make runs from.
+Typst runs with `--root $(EXERCISES_DIR)`, so a sheet may import files from
+anywhere under that directory. Import the template with a path relative to the
+sheet (`./lib/td.typ`) rather than an absolute one (`/lib/td.typ`): it then
+also resolves in an editor preview, whose root is usually the workspace.
 
 ## Variables
 
