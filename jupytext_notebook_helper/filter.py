@@ -36,6 +36,7 @@ comments included -- is replaced by the assertion. See `docs/authoring.md`.
 
 import argparse
 import base64
+import hashlib
 import logging
 import mimetypes
 import re
@@ -914,6 +915,28 @@ if prelude:
     )
     document["cells"][insert_at:insert_at] = prelude
 
+
+def assign_stable_ids(cells) -> None:
+    """Give each cell an id derived from its type and source.
+
+    nbformat makes up a random id for every cell, so two builds of an
+    unchanged source differed: every rebuild looked like a new version to
+    whatever compares files (rsync, a student's update). An id hashed from the
+    content keeps an unchanged cell's id; identical cells get a counter.
+    """
+    seen: dict = {}
+    for cell in cells:
+        source = cell.get("source", "")
+        if not isinstance(source, str):
+            source = "".join(source)
+        key = f"{cell['cell_type']}\0{source}".encode()
+        digest = hashlib.sha1(key).hexdigest()[:12]
+        count = seen.get(digest, 0)
+        seen[digest] = count + 1
+        cell["id"] = digest if count == 0 else f"{digest}-{count}"
+
+
+assign_stable_ids(document["cells"])
 jupytext.write(document, sys.stdout, fmt="ipynb")
 
 if args.depdir is not None:

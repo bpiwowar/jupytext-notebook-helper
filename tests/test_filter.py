@@ -807,3 +807,34 @@ def test_depfile_targets_are_the_ones_tp_mk_builds(tmp_path):
     assert "teacher/local/tp1-embeddings.ipynb" in targets
     assert "teacher/colab/tp1-embeddings.ipynb" in targets
     assert not [t for t in targets if ".student.ipynb" in t or ".teacher.ipynb" in t]
+
+
+# ---------------------------------------------------------------------------
+# Reproducible output: cell ids derived from the content
+# ---------------------------------------------------------------------------
+
+
+def test_two_builds_of_the_same_source_are_identical(tmp_path):
+    src = tmp_path / "sample.py"
+    src.write_text(SAMPLE)
+    cmd = [sys.executable, "-m", "jupytext_notebook_helper.filter"]
+    first = subprocess.run([*cmd, str(src)], capture_output=True, check=True)
+    second = subprocess.run([*cmd, str(src)], capture_output=True, check=True)
+    assert first.stdout == second.stdout
+
+
+def test_an_edit_changes_only_the_edited_cell_id(tmp_path):
+    src = tmp_path / "sample.py"
+    src.write_text(SAMPLE)
+    before = [c["id"] for c in _run([], src)["cells"]]
+    src.write_text(SAMPLE.replace('"teacher-only"', '"edited"'))
+    after = [c["id"] for c in _run([], src)["cells"]]
+    changed = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
+    assert len(before) == len(after) and len(changed) == 1
+
+
+def test_identical_cells_get_distinct_ids(tmp_path):
+    src = tmp_path / "dup.py"
+    src.write_text("# %%\nx = 1\n\n# %%\nx = 1\n")
+    ids = [c["id"] for c in _run([], src)["cells"]]
+    assert len(ids) == len(set(ids)) == 2
