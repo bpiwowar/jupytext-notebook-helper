@@ -847,3 +847,44 @@ def test_rsync_dev_needs_a_dev_path(tmp_path):
     course = _course(tmp_path)
     proc = _make(course, "-n", "rsync-dev", "SSH_HOST=h", "SSH_PATH=/p", check=False)
     assert proc.returncode != 0
+
+
+# --------------------------------------------------------------------------
+# release.json
+# --------------------------------------------------------------------------
+
+RELEASE_MAKEFILE = textwrap.dedent(
+    """
+    ZIP              := student/tp.zip
+    BUNDLE_PYPROJECT := pyproject.toml
+    BUNDLE_LOCK      := uv.lock
+    """
+)
+
+
+@pytest.mark.skipif(shutil.which("zip") is None, reason="zip is not available")
+def test_the_bundle_comes_with_a_release_description(tmp_path):
+    import json
+
+    course = _course(tmp_path, names=("tp1",), makefile_head=RELEASE_MAKEFILE)
+    _make(course, "bundle")
+
+    release = json.loads((course / "student" / "release.json").read_text())
+    assert release["bundle"]["path"] == "tp.zip"
+    assert "notebooks/tp1.ipynb" in release["files"]
+    assert release["env"] == ["pyproject.toml", "uv.lock"]
+
+    line = _rsync_line(course)
+    assert '--include "/release.json"' in line
+
+
+@pytest.mark.skipif(shutil.which("zip") is None, reason="zip is not available")
+def test_an_env_only_bundle_is_no_release(tmp_path):
+    course = _course(
+        tmp_path,
+        names=("tp1",),
+        makefile_head=RELEASE_MAKEFILE + "BUNDLE_NOTEBOOKS := no\n",
+    )
+    _make(course, "bundle")
+    assert (course / "student" / "tp.zip").is_file()
+    assert not (course / "student" / "release.json").exists()

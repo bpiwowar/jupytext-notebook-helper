@@ -432,6 +432,30 @@ BUNDLE_NOTEBOOK_DEPS := $(if $(BUNDLE_WITH_NOTEBOOKS),$(STUDENT_LOCAL))
 $(ZIP): $(BUNDLE_NOTEBOOK_DEPS) $(BUNDLE_DEPS)
 	$(call build_bundle,$@,$(BUNDLE_NOTEBOOK_DEPS))
 
+# ---- release.json: the bundle, as a release a student can update to -------
+# A student who unzipped the bundle and worked in it cannot unzip the next one
+# on top. release.json, next to the zip, lists each of its files with a hash,
+# for the updater (`cs-lab course update`) to tell what changed since the
+# version the student has. Its `id` depends on the content only: rebuilding an
+# unchanged bundle keeps it. Only written when the bundle carries the
+# notebooks, and lies under $(DESTDIR_TP), so is deployed with them.
+RELEASE_JSON ?= $(if $(BUNDLE_WITH_NOTEBOOKS),$(if $(call under_destdir,$(ZIP)),$(DESTDIR_TP)/release.json))
+#: The course's release name, which the updater checks before applying one.
+RELEASE_NAME ?= $(STUDENT_ENV_NAME)
+#: Informative: the source commit a release was built from. Recursive (`=`):
+#: git then only runs when release.json is written.
+RELEASE_SOURCE_REV = $(shell git describe --always --dirty 2>/dev/null)
+
+ifneq ($(strip $(RELEASE_JSON)),)
+$(RELEASE_JSON): $(ZIP)
+	@$(PYTHON) python -m jupytext_notebook_helper.release $< --output $@ \
+		--name "$(RELEASE_NAME)" --bundle-url "$(call under_destdir,$(ZIP))" \
+		$(if $(RELEASE_SOURCE_REV),--source "$(RELEASE_SOURCE_REV)")
+
+student: $(if $(PUBLISHED_NAMES),$(RELEASE_JSON))
+bundle: $(RELEASE_JSON)
+endif
+
 # The solution bundle: the same env, with the corrigé. BUNDLE_NOTEBOOKS does not
 # apply — an env-only archive is the student one.
 ifneq ($(strip $(SOLUTION_ZIP)),)
@@ -570,7 +594,7 @@ clean:
 	@rm -rf $(TEACHER_DIR) $(SOLUTION_DIR) $(DEPDIR) $(TESTED_DIR) $(RESOLVED_DIR) \
 		$(BUNDLE_DIR) $(STUDENT_ENV_DIR) $(STUDENT_LOCAL) $(STUDENT_COLAB) \
 		$(STUDENT_LOCAL_DIR) $(STUDENT_COLAB_DIR) $(LEGACY_OUTPUTS) $(ZIP) $(SOLUTION_ZIP) \
-		$(INDEX_HTML) $(DESTDIR_TP)/$(EXERCISES_SUBDIR) \
+		$(INDEX_HTML) $(RELEASE_JSON) $(DESTDIR_TP)/$(EXERCISES_SUBDIR) \
 		$(DEV_DESTDIR_TP) $(DEPDIR)-dev $(STUDENT_ENV_DIR)-dev $(BUNDLE_DIR)-dev
 
 # ---- run-teacher: execute the teacher notebooks, and KEEP the result -------
@@ -762,7 +786,8 @@ RSYNC_SOLUTION_PATTERNS := $(if $(SOLUTION_REL_DIR),/$(SOLUTION_REL_DIR)/ /$(SOL
                            $(if $(SOLUTION_REL_ZIP),/$(SOLUTION_REL_ZIP))
 RSYNC_ARGS := $(foreach i,$(RSYNC_SOLUTION_PATTERNS),$(if $(SOLUTIONS_RELEASED),--include,--exclude) "$(i)") \
               $(foreach i,$(RSYNC_INCLUDE) $(if $(RSYNC_DATA),data/ data/*),--include "$(i)") \
-              $(if $(STUDENT_EXERCISES),--include "/$(EXERCISES_SUBDIR)/" --include "/$(EXERCISES_SUBDIR)/*.pdf")
+              $(if $(STUDENT_EXERCISES),--include "/$(EXERCISES_SUBDIR)/" --include "/$(EXERCISES_SUBDIR)/*.pdf") \
+              $(if $(strip $(RELEASE_JSON)),--include "/$(call under_destdir,$(RELEASE_JSON))")
 
 ifneq ($(strip $(SSH_HOST)),)
 .PHONY: rsync
@@ -1165,7 +1190,8 @@ Build
                    + $(SOLUTION_ZIP))
   exercises        the Typst exercise sheets of $(EXERCISES_DIR)/ (student + with
                    solutions); also built by student / teacher / solution
-  bundle           the uv-ready zip(s) only$(if $(BUNDLE_WITH_NOTEBOOKS),, (student: env only, no notebooks))
+  bundle           the uv-ready zip(s) only$(if $(BUNDLE_WITH_NOTEBOOKS),, (student: env only, no notebooks))$(if $(strip $(RELEASE_JSON)),
+                   + $(RELEASE_JSON), what a student's folder updates to)
   all              student + teacher
   index            the hand-out page at $(INDEX_HTML): the archives to
                    download, then one row per practical with a link per
