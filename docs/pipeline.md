@@ -55,7 +55,7 @@ In the cells, `[[student]] … [[/student]]` marks what students must write,
 
 | Target     | Produces |
 |------------|----------|
-| `student`  | `$(DESTDIR_TP)/{local,colab}/<name>.ipynb`, `$(ZIP)` |
+| `student`  | `$(DESTDIR_TP)/{local,colab}/<name>.ipynb`, `$(ZIP)`, `$(RELEASE_JSON)` |
 | `teacher`  | `$(TEACHER_DIR)/{local,colab}/<name>.ipynb` |
 | `solution` | `$(SOLUTION_DIR)/{local,colab}/<name>.ipynb`, `$(SOLUTION_ZIP)` |
 | `bundle`   | the zips only |
@@ -66,6 +66,38 @@ single cell, inlines the course library functions a notebook uses, and adds a
 pinned `%pip install` cell (generated from `uv.lock`) to the Colab variants.
 Which packages that cell and the bundle carry is set in `pyproject.toml`,
 under `[tool.jupytext-notebook-helper]`.
+
+Builds are reproducible: a cell's id is a hash of its type and source, so
+rebuilding an unchanged source gives the same bytes, and rsync — or a
+student's update — sees nothing new.
+
+### The release a student updates to
+
+When the zip carries the notebooks (`BUNDLE_NOTEBOOKS`, the default) and lies
+under `$(DESTDIR_TP)`, `student` also writes `$(DESTDIR_TP)/release.json`,
+deployed with it:
+
+```json
+{
+  "format": 1,
+  "name": "llm-mind",
+  "id": "f1074890a35b7cf6",
+  "created": "2026-11-22T16:26:11Z",
+  "source": "354d031",
+  "bundle": {"path": "tp-llm-uv.zip", "sha256": "…"},
+  "env": ["pyproject.toml", "uv.lock"],
+  "lock": "sha256:…",
+  "files": {"README.md": "sha256:…", "notebooks/attention.ipynb": "sha256:…"}
+}
+```
+
+Each file of the zip is listed with its hash, under the path it has in a
+student's folder, so an updater can tell what changed since the version a
+student has, and leave alone what they edited. `id` depends on the content
+only: a rebuilt zip of the same files keeps it (and its `created`). `name` is
+`RELEASE_NAME` (default: the student environment's name) — set it to
+something that names the course. The development build (`rsync-dev`,
+`stage-dev`) has a release of its own.
 
 ## 3. Check
 
