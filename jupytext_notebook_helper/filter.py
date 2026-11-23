@@ -110,6 +110,14 @@ PIP_RELAX = set()
 # build runs from a sub-directory).
 UV_ROOT = "."
 
+#: Modules that stand in for another library and so need it installed too:
+#: cs-lab's drop-in replacements import the library they wrap, which a
+#: notebook importing only them would otherwise not get.
+IMPORT_ALSO_NEEDS = {
+    "cs_lab.transformers": ("transformers",),
+    "cs_lab.datasets": ("datasets",),
+}
+
 # Mapping from Python import names to pip package names
 # (for cases where they differ)
 IMPORT_TO_PACKAGE = {
@@ -341,27 +349,26 @@ def get_imported_packages(imports: Imports) -> set:
     Get the set of package names based on collected imports.
     Maps import names to pip package names where they differ.
     """
+    modules = [
+        *imports.imports.keys(),  # import X
+        *imports.imports_from.keys(),  # from X import Y
+        # Imports kept in place by `[[keep-imports]]`: not emitted with the
+        # others, but their packages still have to be installed.
+        *imports.packaging_only,
+        # from cs_lab import transformers
+        *(
+            f"{module}.{symbol}"
+            for module, symbols in imports.imports_from.items()
+            for symbol in symbols.values()
+            if f"{module}.{symbol}" in IMPORT_ALSO_NEEDS
+        ),
+    ]
     imported = set()
-
-    # From "import X" statements
-    for module in imports.imports.keys():
-        top_level = module.split(".")[0]
-        package = IMPORT_TO_PACKAGE.get(top_level, top_level)
-        imported.add(package.lower())
-
-    # From "from X import Y" statements
-    for module in imports.imports_from.keys():
-        top_level = module.split(".")[0]
-        package = IMPORT_TO_PACKAGE.get(top_level, top_level)
-        imported.add(package.lower())
-
-    # Imports kept in place by `[[keep-imports]]`: not emitted with the others,
-    # but their packages still have to be installed.
-    for module in imports.packaging_only:
-        top_level = module.split(".")[0]
-        package = IMPORT_TO_PACKAGE.get(top_level, top_level)
-        imported.add(package.lower())
-
+    for module in modules:
+        for name in (module, *IMPORT_ALSO_NEEDS.get(module, ())):
+            top_level = name.split(".")[0]
+            package = IMPORT_TO_PACKAGE.get(top_level, top_level)
+            imported.add(package.lower())
     return imported
 
 

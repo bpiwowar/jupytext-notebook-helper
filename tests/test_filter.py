@@ -838,3 +838,55 @@ def test_identical_cells_get_distinct_ids(tmp_path):
     src.write_text("# %%\nx = 1\n\n# %%\nx = 1\n")
     ids = [c["id"] for c in _run([], src)["cells"]]
     assert len(ids) == len(set(ids)) == 2
+
+
+def test_cs_lab_dropins_need_the_library_they_wrap(tmp_path):
+    """`from cs_lab.transformers import …` imports transformers underneath: a
+    notebook that imports nothing else from it still needs it installed."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'proj'\n")
+    (tmp_path / "uv.lock").write_text(
+        textwrap.dedent(
+            """
+            version = 1
+
+            [[package]]
+            name = "proj"
+            version = "0.1.0"
+
+            [package.metadata]
+            requires-dist = [{ name = "cs-lab" }]
+
+            [[package]]
+            name = "cs-lab"
+            version = "1.1.0"
+
+            [[package]]
+            name = "transformers"
+            version = "4.57.5"
+
+            [[package]]
+            name = "datasets"
+            version = "5.0.1"
+            """
+        )
+    )
+    src = tmp_path / "sample.py"
+    src.write_text(
+        textwrap.dedent(
+            """\
+            # %% tags=["pip"]
+
+            # %%
+            from cs_lab import datasets as ds
+            from cs_lab.transformers import AutoModel
+            """
+        )
+    )
+    depdir = tmp_path / "deps"
+    nb = _run(["--uv-root", str(tmp_path), "--depdir", str(depdir)], src)
+    packages = (depdir / "sample.pkgs").read_text().split()
+    assert {"transformers", "datasets"} <= set(packages)
+    pip_source = next(
+        _cell_source(c) for c in nb["cells"] if "%pip install" in _cell_source(c)
+    )
+    assert "transformers==4.57.*" in pip_source
