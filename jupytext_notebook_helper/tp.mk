@@ -858,6 +858,15 @@ endif
 # empty one would vanish otherwise).
 # Run it before `rsync` hands the release out, so that the release a student
 # gets never asks for an environment the room does not have yet.
+#
+# SHARED_ENV_SYNC: `auto` (the default) syncs when something sent there changed
+# since the last sync that succeeded from here — the lock, pyproject.toml,
+# resources.py, the script, a SHARED_ENV_* setting; `yes` syncs anyway (an
+# environment removed by hand there, a sync made from another checkout); `no`
+# never does (no access to the room's machine today): `make deploy
+# SHARED_ENV_SYNC=no`. A sync of an unchanged lock is cheap anyway: the room's
+# machine finds the environment built and only checks the downloads.
+SHARED_ENV_SYNC      ?= auto
 SHARED_ENV_HOST      ?=
 #: On SHARED_ENV_HOST: relative to the home directory, or absolute.
 SHARED_ENV_ROOT      ?=
@@ -888,16 +897,63 @@ endif
 ifneq ($(and $(strip $(SHARED_ENV_HOST)),$(strip $(SHARED_ENV_ROOT))),)
 SHARED_ENV_INCOMING = $(SHARED_ENV_ROOT)/incoming/$(SHARED_ENV_LINK)
 
+ifeq ($(filter $(SHARED_ENV_SYNC),auto yes no),)
+$(error SHARED_ENV_SYNC is auto, yes or no, not '$(SHARED_ENV_SYNC)')
+endif
+
+#: Runs shared_env.sh there (a fresh copy of it) with SHARED_ENV_ACTION=$(1).
+define shared_env_run
+ssh $(SHARED_ENV_HOST) mkdir -p "'$(SHARED_ENV_INCOMING)'"
+rsync -t $(TP_MK_DIR)shared_env.sh $(SHARED_ENV_HOST):'$(SHARED_ENV_INCOMING)/'
+ssh -o ServerAliveInterval=30 $(SHARED_ENV_HOST) env SHARED_ENV_ACTION=$(1) \
+	bash -l "'$(SHARED_ENV_INCOMING)/shared_env.sh'" \
+	"'$(SHARED_ENV_ROOT)'" "'$(SHARED_ENV_LINK)'" "'$(SHARED_ENV_PYTHON)'" \
+	"'$(SHARED_ENV_CACHE)'" "'$(SHARED_ENV_UV)'" "'$(SHARED_ENV_KEEP)'"
+endef
+
+# Looking after it: what is there, the running build, what a killed one left.
+.PHONY: shared-env-status shared-env-log shared-env-log-dev shared-env-clean
+shared-env-status:
+	$(call shared_env_run,status)
+shared-env-log:
+	$(call shared_env_run,log)
+shared-env-log-dev:
+	+$(DEV_MAKE) shared-env-log
+shared-env-clean:
+	$(call shared_env_run,clean)
+
+#: The last sync that succeeded (DEPDIR is per site: dev has its own).
+SHARED_ENV_DONE := $(DEPDIR)/shared-env.done
+#: The settings it was made with: a change syncs again.
+SHARED_ENV_SETTINGS_STAMP := $(DEPDIR)/shared-env.settings
+
 .PHONY: shared-env shared-env-dev
-shared-env: $(BUNDLE_PYPROJECT) $(BUNDLE_LOCK) $(SHARED_ENV_RESOURCES)
+ifeq ($(SHARED_ENV_SYNC),no)
+shared-env:
+	@echo "=== Shared environment on $(SHARED_ENV_HOST): not synced (SHARED_ENV_SYNC=no) ==="
+else
+_shared_env_settings := $(SHARED_ENV_HOST) $(SHARED_ENV_ROOT) $(SHARED_ENV_LINK) \
+	$(SHARED_ENV_PYTHON) $(SHARED_ENV_CACHE) $(SHARED_ENV_UV) $(SHARED_ENV_KEEP)
+_shared_env_stamp := $(shell mkdir -p $(DEPDIR) && \
+	{ [ "$$(cat $(SHARED_ENV_SETTINGS_STAMP) 2>/dev/null)" = "$(strip $(_shared_env_settings))" ] || \
+	  echo "$(strip $(_shared_env_settings))" > $(SHARED_ENV_SETTINGS_STAMP); })
+$(SHARED_ENV_SETTINGS_STAMP): ;
+.PHONY: _shared_env_force
+_shared_env_force: ;
+
+shared-env: $(SHARED_ENV_DONE)
+	@echo "=== Shared environment on $(SHARED_ENV_HOST): $(SHARED_ENV_ROOT)/$(SHARED_ENV_LINK) in sync$(if $(filter auto,$(SHARED_ENV_SYNC)), (SHARED_ENV_SYNC=yes to sync anyway)) ==="
+
+$(SHARED_ENV_DONE): $(BUNDLE_PYPROJECT) $(BUNDLE_LOCK) $(SHARED_ENV_RESOURCES) \
+		$(TP_MK_DIR)shared_env.sh $(SHARED_ENV_SETTINGS_STAMP) \
+		$(if $(filter yes,$(SHARED_ENV_SYNC)),_shared_env_force)
 	@echo "=== Shared environment on $(SHARED_ENV_HOST): $(SHARED_ENV_ROOT)/$(SHARED_ENV_LINK) ==="
 	ssh $(SHARED_ENV_HOST) mkdir -p "'$(SHARED_ENV_INCOMING)'"
 	rsync -t $(BUNDLE_PYPROJECT) $(BUNDLE_LOCK) $(SHARED_ENV_HOST):'$(SHARED_ENV_INCOMING)/'
 	$(if $(strip $(SHARED_ENV_RESOURCES)),rsync -t $(SHARED_ENV_RESOURCES) $(SHARED_ENV_HOST):'$(SHARED_ENV_INCOMING)/resources.py')
-	rsync -t $(TP_MK_DIR)shared_env.sh $(SHARED_ENV_HOST):'$(SHARED_ENV_INCOMING)/'
-	ssh -o ServerAliveInterval=30 $(SHARED_ENV_HOST) bash -l "'$(SHARED_ENV_INCOMING)/shared_env.sh'" \
-		"'$(SHARED_ENV_ROOT)'" "'$(SHARED_ENV_LINK)'" "'$(SHARED_ENV_PYTHON)'" \
-		"'$(SHARED_ENV_CACHE)'" "'$(SHARED_ENV_UV)'" "'$(SHARED_ENV_KEEP)'"
+	$(call shared_env_run,build)
+	@mkdir -p $(@D) && touch $@
+endif
 
 shared-env-dev:
 	+$(DEV_MAKE) shared-env
@@ -1243,6 +1299,11 @@ define HELP_SHARED_ENV
                    $(SHARED_ENV_HOST):$(SHARED_ENV_ROOT)/current, with the
                    resources in $(or $(SHARED_ENV_CACHE),(no SHARED_ENV_CACHE: none))
   shared-env-dev   the same for the dev site: .../current-dev
+                   (only when something changed since the last sync:
+                   SHARED_ENV_SYNC=yes to sync anyway, =no to skip it)
+  shared-env-status  the links, the environments there, the builds
+  shared-env-log   follow the running build to its end (-dev: the dev one's)
+  shared-env-clean what a killed build left there, and old environments
 endef
 
 define HELP_PUBLISH_GIT

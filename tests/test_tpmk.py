@@ -941,6 +941,92 @@ def test_no_shared_env_without_a_host(tmp_path):
     assert "shared-env" not in _make(course, "help").stdout
 
 
+FAKE_REMOTE = """#!/bin/sh
+# {name}, as far as `make shared-env` is concerned: a log line per call.
+echo "{name} $*" >> "{log}"
+case "$*" in *SHARED_ENV_ACTION=build*) [ -e "{fail}" ] && exit 1 ;; esac
+exit 0
+"""
+
+
+def _fake_room(course):
+    """Fake ssh and rsync (first on make's PATH): what they were asked to do."""
+    log, fail = course / "remote.log", course / "remote.fail"
+    for name in ("ssh", "rsync"):
+        tool = course / ".shim" / name
+        tool.parent.mkdir(exist_ok=True)
+        tool.write_text(FAKE_REMOTE.format(name=name, log=log, fail=fail))
+        tool.chmod(0o755)
+
+    def builds(*args, check=True):
+        log.unlink(missing_ok=True)
+        proc = _make(course, "shared-env", *SHARED_ENV, *args, check=check)
+        calls = log.read_text() if log.exists() else ""
+        # make compares to the second: what this run read or wrote goes back
+        # in time, the stamp less far than what it depends on.
+        for made in [*(course / "student-env").glob("*"), course / ".deps"]:
+            if made.is_file():
+                _age(made, 120)
+        for made in (course / ".deps").glob("shared-env.*"):
+            _age(made, 120)
+        done = course / ".deps" / "shared-env.done"
+        if done.exists():
+            _age(done, 60)
+        return proc, calls.count("SHARED_ENV_ACTION=build")
+
+    return builds, fail
+
+
+def test_shared_env_syncs_only_what_changed(tmp_path):
+    course = _course(tmp_path, names=("tp1",))
+    builds, _ = _fake_room(course)
+    assert builds()[1] == 1
+    proc, count = builds()
+    assert count == 0 and "in sync" in proc.stdout
+    # A setting changes: again.
+    assert builds("SHARED_ENV_KEEP=5")[1] == 1
+    assert builds("SHARED_ENV_KEEP=5")[1] == 0
+    # The lock changes: again.
+    lock = course / "student-env" / "uv.lock"
+    lock.write_text(lock.read_text() + "\n")
+    assert builds("SHARED_ENV_KEEP=5")[1] == 1
+
+
+def test_shared_env_sync_yes_and_no(tmp_path):
+    course = _course(tmp_path, names=("tp1",))
+    builds, _ = _fake_room(course)
+    assert builds()[1] == 1
+    assert builds("SHARED_ENV_SYNC=yes")[1] == 1
+    proc, count = builds("SHARED_ENV_SYNC=no")
+    assert count == 0 and "not synced" in proc.stdout
+    assert _make(course, "shared-env", *SHARED_ENV, "SHARED_ENV_SYNC=maybe",
+                 check=False).returncode != 0  # fmt: skip
+
+
+def test_a_failed_sync_is_tried_again(tmp_path):
+    course = _course(tmp_path, names=("tp1",))
+    builds, fail = _fake_room(course)
+    fail.touch()
+    proc, count = builds(check=False)
+    assert count == 1 and proc.returncode != 0
+    fail.unlink()
+    assert builds()[1] == 1
+
+
+def test_shared_env_maintenance_targets(tmp_path):
+    course = _course(tmp_path, names=("tp1",))
+    for target, action, link in (
+        ("shared-env-status", "status", "current"),
+        ("shared-env-log", "log", "current"),
+        ("shared-env-log-dev", "log", "current-dev"),
+        ("shared-env-clean", "clean", "current"),
+    ):
+        out = " ".join(_make(course, "-n", target, *SHARED_ENV).stdout.split())
+        assert f"env SHARED_ENV_ACTION={action} bash -l" in out, target
+        assert f"\"'envs/course'\" \"'{link}'\"" in out, target
+        assert "uv.lock" not in out  # nothing of the release is sent
+
+
 def _gnu() -> bool:
     try:
         version = subprocess.run(["mv", "--version"], capture_output=True, text=True)
@@ -958,28 +1044,79 @@ sync)
     site=$("$UV_PROJECT_ENVIRONMENT/bin/python" -c \\
         'import sysconfig; print(sysconfig.get_paths()["purelib"])')
     echo "" > "$site/cs_lab.py"
-    printf '#!/bin/sh\\necho "$CS_LAB_CACHE_PATH $*" >> "%s/downloads"\\n' \\
-        "$UV_PROJECT_ENVIRONMENT" > "$UV_PROJECT_ENVIRONMENT/bin/cs-lab"
+    printf '#!/bin/sh\\necho "$CS_LAB_CACHE_PATH $*" >> "%s/downloads"\\ncat "$4" >> "%s/downloads"\\n' \\
+        "$UV_PROJECT_ENVIRONMENT" "$UV_PROJECT_ENVIRONMENT" > "$UV_PROJECT_ENVIRONMENT/bin/cs-lab"
     chmod +x "$UV_PROJECT_ENVIRONMENT/bin/cs-lab"
-    echo "$@" > "$UV_PROJECT_ENVIRONMENT/sync-args" ;;
+    echo "$@" > "$UV_PROJECT_ENVIRONMENT/sync-args"
+    # Knobs for the tests: the build's process group, a slow or failing sync.
+    [ -n "$FAKE_UV_PGID" ] && ps -o pgid= $$ | tr -d ' ' > "$FAKE_UV_PGID"
+    [ -n "$FAKE_UV_SLEEP" ] && sleep "$FAKE_UV_SLEEP"
+    [ -n "$FAKE_UV_FAIL" ] && exit 1
+    true ;;
 export) shift; while [ "$1" != "-o" ]; do shift; done; echo "numpy==2" > "$2" ;;
 esac
 """
 
 
-def _shared_env(root, lock, cache="cache", keep="3", link="current"):
+SHARED_ENV_SH = os.path.join(ROOT, "jupytext_notebook_helper", "shared_env.sh")
+
+
+def _shared_env(
+    root,
+    lock,
+    cache="cache",
+    keep="3",
+    link="current",
+    python="3.12",
+    resources="RESOURCES = {}\n",
+    background=False,
+    action="build",
+    **env,
+):
     incoming = root / "incoming" / link
     incoming.mkdir(parents=True, exist_ok=True)
-    (incoming / "pyproject.toml").write_text("[project]\n")
-    (incoming / "uv.lock").write_text(lock)
-    (incoming / "resources.py").write_text("RESOURCES = {}\n")
-    script = os.path.join(ROOT, "jupytext_notebook_helper", "shared_env.sh")
-    return subprocess.run(
-        ["bash", script, str(root), link, "3.12", cache, "9.9.9", keep],
-        capture_output=True,
+    if lock is not None:
+        (incoming / "pyproject.toml").write_text("[project]\n")
+        (incoming / "uv.lock").write_text(lock)
+        (incoming / "resources.py").write_text(resources)
+    command = ["bash", SHARED_ENV_SH, str(root), link, python, cache, "9.9.9", keep]
+    options = dict(
         text=True,
-        env={**os.environ, "HOME": str(root.parent)},
+        env={
+            **os.environ,
+            "HOME": str(root.parent),
+            "SHARED_ENV_ACTION": action,
+            **env,
+        },
     )
+    if background:
+        return subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **options
+        )
+    return subprocess.run(command, capture_output=True, **options)
+
+
+def _room(tmp_path):
+    root = tmp_path / "envs"
+    (root / "bin").mkdir(parents=True)
+    (root / "bin" / "uv").write_text(FAKE_UV.format(python=sys.executable))
+    (root / "bin" / "uv").chmod(0o755)
+    return root
+
+
+def _held(lock):
+    """Whether a build holds this lock file."""
+    return (
+        lock.exists()
+        and subprocess.run(["flock", "-n", str(lock), "true"]).returncode != 0
+    )
+
+
+def _wait(condition, timeout=30):
+    deadline = time.time() + timeout
+    while not condition():
+        assert time.time() < deadline, "timed out"
+        time.sleep(0.2)
 
 
 @pytest.mark.skipif(not _gnu(), reason="shared_env.sh is for GNU/Linux")
@@ -1024,6 +1161,120 @@ def test_shared_env_script(tmp_path):
     assert (root / "current").resolve().name in envs
     assert (root / "current").resolve() / "uv.lock"
     assert ((root / "current").resolve() / "uv.lock").read_text() == "lock 3"
+
+
+@pytest.mark.skipif(not _gnu(), reason="shared_env.sh is for GNU/Linux")
+def test_the_environment_depends_on_the_lock_and_python(tmp_path):
+    root = _room(tmp_path)
+    assert _shared_env(root, "lock 1").returncode == 0
+    first = (root / "current").resolve()
+    assert _shared_env(root, "lock 1", python="3.13").returncode == 0
+    assert (root / "current").resolve() != first
+
+
+@pytest.mark.skipif(not _gnu(), reason="shared_env.sh is for GNU/Linux")
+def test_the_resources_follow_without_a_new_lock(tmp_path):
+    root = _room(tmp_path)
+    assert _shared_env(root, "lock 1", resources="A = 1\n").returncode == 0
+    env = (root / "current").resolve()
+    assert _shared_env(root, "lock 1", resources="B = 2\n").returncode == 0
+    assert (root / "current").resolve() == env  # not rebuilt...
+    assert (env / "downloads").read_text().endswith("B = 2\n")  # ...but fetched
+
+
+@pytest.mark.skipif(not _gnu(), reason="shared_env.sh is for GNU/Linux")
+def test_a_failed_build_cleans_up(tmp_path):
+    root = _room(tmp_path)
+    proc = _shared_env(root, "lock 1", FAKE_UV_FAIL="1")
+    assert proc.returncode != 0
+    assert "FAILED" in proc.stdout
+    # No half-built environment, no link, no lock held, a status saying so.
+    assert not [p for p in root.iterdir() if len(p.name) == 16]
+    assert not (root / "current").exists()
+    incoming = root / "incoming" / "current"
+    assert not _held(incoming / "build.lock")
+    assert (incoming / "build.status").read_text().strip() != "0"
+    assert not (root / "incoming" / ".current.build").exists()
+    # And the next one goes through.
+    assert _shared_env(root, "lock 1").returncode == 0
+
+
+@pytest.mark.skipif(not _gnu(), reason="shared_env.sh is for GNU/Linux")
+def test_a_killed_build_is_noticed_and_cleaned(tmp_path):
+    root = _room(tmp_path)
+    pgid = tmp_path / "pgid"
+    proc = _shared_env(
+        root, "lock 1", background=True, FAKE_UV_SLEEP="60", FAKE_UV_PGID=str(pgid)
+    )
+    _wait(lambda: pgid.exists() and pgid.read_text().strip())
+    os.killpg(int(pgid.read_text()), 9)  # no trap runs, no status written
+    out, err = proc.communicate(timeout=30)
+    assert proc.returncode != 0
+    assert "without a status" in err
+    assert not _held(root / "incoming" / "current" / "build.lock")
+
+    status = _shared_env(root, None, action="status")
+    assert "half built" in status.stdout and "no status" in status.stdout
+    assert _shared_env(root, None, action="clean").returncode == 0
+    assert not [p for p in root.iterdir() if len(p.name) == 16]
+    assert not list(root.glob(".*.lock"))
+    assert _shared_env(root, "lock 1").returncode == 0
+
+
+@pytest.mark.skipif(not _gnu(), reason="shared_env.sh is for GNU/Linux")
+def test_clean_spares_an_environment_while_a_build_runs(tmp_path):
+    """A build of an older version of the script takes no lock per
+    environment: while any build runs, an unfinished one may be its."""
+    root = _room(tmp_path)
+    (root / "0123456789abcdef").mkdir()  # unfinished
+    lock = root / "incoming" / "current-dev" / "build.lock"
+    lock.parent.mkdir(parents=True)
+    holder = subprocess.Popen(
+        ["flock", str(lock), "sleep", "30"], start_new_session=True
+    )
+    try:
+        _wait(lambda: _held(lock))
+        status = _shared_env(root, None, action="status").stdout
+        assert "unfinished (a build is running)" in status
+        assert _shared_env(root, None, action="clean").returncode == 0
+        assert (root / "0123456789abcdef").exists()
+    finally:  # sleep holds the lock too: the whole group
+        os.killpg(holder.pid, 9)
+        holder.wait()
+    assert _shared_env(root, None, action="clean").returncode == 0
+    assert not (root / "0123456789abcdef").exists()
+
+
+@pytest.mark.skipif(not _gnu(), reason="shared_env.sh is for GNU/Linux")
+def test_a_deploy_during_a_build_waits_then_builds_its_own(tmp_path):
+    root = _room(tmp_path)
+    first = _shared_env(root, "lock 1", background=True, FAKE_UV_SLEEP="3")
+    _wait(lambda: _held(root / "incoming" / "current" / "build.lock"))
+    # A newer release arrives while the first is building.
+    second = _shared_env(root, "lock 2")
+    assert first.wait(timeout=60) == 0
+    assert second.returncode == 0, second.stderr
+    assert "already running" in second.stdout
+    envs = [p for p in root.iterdir() if len(p.name) == 16]
+    # Each environment holds the lock it was built from...
+    assert sorted((p / "uv.lock").read_text() for p in envs) == ["lock 1", "lock 2"]
+    # ...and the link, the latest.
+    assert ((root / "current").resolve() / "uv.lock").read_text() == "lock 2"
+
+
+@pytest.mark.skipif(not _gnu(), reason="shared_env.sh is for GNU/Linux")
+def test_both_sites_ask_for_the_same_environment_at_once(tmp_path):
+    root = _room(tmp_path)
+    procs = [
+        _shared_env(root, "lock 1", link=link, background=True, FAKE_UV_SLEEP="2")
+        for link in ("current", "current-dev")
+    ]
+    assert [p.wait(timeout=60) for p in procs] == [0, 0]
+    assert (root / "current").resolve() == (root / "current-dev").resolve()
+    out = (root / "current").resolve() / "sync-args"
+    assert out.exists()  # built once, complete
+    status = _shared_env(root, None, action="status").stdout
+    assert "complete  <- current current-dev" in status
 
 
 @pytest.mark.skipif(shutil.which("zip") is None, reason="zip is not available")

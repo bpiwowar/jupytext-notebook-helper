@@ -254,6 +254,48 @@ development in `$(DESTDIR_TP)`. The manifest is not affected: it still lists
 the practicals in `DEV`, and the slides linking to them decide what is in
 development.
 
+### A teaching room's environment: `make shared-env`
+
+Where every machine of a room shares a home directory (NFS), the course can
+install the student environment once for the whole room, and students use it
+instead of installing their own (`cs-lab course init` finds it through
+`release.json`):
+
+```makefile
+SHARED_ENV_HOST  := room-machine-01              # where to build it (ssh)
+SHARED_ENV_ROOT  := /home/teacher/envs/mycourse  # absolute: release.json names it
+SHARED_ENV_CACHE := /home/teacher/cache/mycourse # models and datasets (optional)
+```
+
+`make shared-env` (`shared-env-dev` for the development site) sends the
+release's `pyproject.toml`, `uv.lock` and `resources.py` there and runs
+`shared_env.sh`, which:
+
+- builds one environment per lock and Python version
+  (`$(SHARED_ENV_ROOT)/<hash>/`), hardlinked from uv's cache, once — the same
+  lock asked for by both sites is built once;
+- downloads the resources into `SHARED_ENV_CACHE`, which the environment's
+  Python then uses by default (`CS_LAB_CACHE_PATH`), a failed download being a
+  warning;
+- switches `$(SHARED_ENV_ROOT)/current` (`current-dev`) to it, and removes the
+  environments beyond `SHARED_ENV_KEEP` (3) that neither link uses.
+
+The build runs detached on the room's machine: a dropped connection does not
+stop it, a second `make shared-env` meanwhile waits for it and then builds its
+own release, and a failed build stops what it started and removes what it
+left half built.
+
+Run it before `rsync`, so that a release never asks for an environment the
+room does not have yet. It only syncs when something it sends, or a setting,
+changed since the last sync that succeeded: `SHARED_ENV_SYNC=yes` syncs
+anyway, `SHARED_ENV_SYNC=no` skips it. Looking after it:
+
+| Target | |
+|---|---|
+| `shared-env-status` | the links, the environments, the builds and their last result |
+| `shared-env-log` (`-dev`) | follow the running build to its end |
+| `shared-env-clean` | what a killed build left, then old environments |
+
 ## The index page: `INDEX_TITLE`
 
 What a student opens is a directory listing: every `.ipynb`, the zip and the
