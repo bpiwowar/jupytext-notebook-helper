@@ -120,7 +120,7 @@ STUDENT_README ?= $(SOURCES_DIR)/STUDENT_README.md
 # instructor deps that break `uv sync` once unzipped elsewhere).
 STUDENT_ENV_DIR       ?= student-env
 STUDENT_ENV_NAME      ?= tp-student-env
-STUDENT_REQUIRES_PYTHON ?= >=3.10, <3.12
+STUDENT_REQUIRES_PYTHON ?= >=3.11, <3.15
 # Added to what the notebooks import. jupyter / jupyterlab / ipywidgets are
 # always included; a course's own additions are better placed in its
 # pyproject.toml ([tool.jupytext-notebook-helper] student-base-deps), which can

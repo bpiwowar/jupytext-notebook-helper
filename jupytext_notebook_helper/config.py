@@ -11,7 +11,7 @@ other metadata, not in its Makefile::
     pip-force-include = ["torchvision", "sentencepiece"]
     pip-relax = ["numpy", "torch"]
     student-base-deps = ["cs-lab>=1.0"]
-    student-requires-python = ">=3.10, <3.12"
+    student-requires-python = ">=3.11, <3.15"
     student-env-name = "tp-student-env"
 
 Every key is optional, and the corresponding make variable / command-line
@@ -40,7 +40,7 @@ TOOL_TABLE = "jupytext-notebook-helper"
 DEFAULT_STUDENT_BASE_DEPS = ("jupyter", "jupyterlab", "ipywidgets")
 
 DEFAULT_STUDENT_ENV_NAME = "tp-student-env"
-DEFAULT_STUDENT_REQUIRES_PYTHON = ">=3.10, <3.12"
+DEFAULT_STUDENT_REQUIRES_PYTHON = ">=3.11, <3.15"
 
 
 @dataclass

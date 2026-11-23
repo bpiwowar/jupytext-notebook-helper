@@ -67,7 +67,7 @@ pip-relax = ["numpy", "torch"]
 # added to the student environment whatever the notebooks import
 student-base-deps = ["cs-lab>=1.0"]
 student-env-name = "tp-mycourse"
-student-requires-python = ">=3.10, <3.12"
+student-requires-python = ">=3.11, <3.15"
 ```
 
 The table is read from the `pyproject.toml` under `ROOT` (the `--uv-root` the
