@@ -33,7 +33,9 @@ def test_every_file_is_listed_with_its_hash(tmp_path):
 
 def test_the_id_depends_on_the_content_only(tmp_path):
     one = describe(_zip(tmp_path / "a.zip", FILES), name="tp")
-    two = describe(_zip(tmp_path / "b.zip", FILES, date=(2024, 5, 5, 5, 5, 6)), name="tp")
+    two = describe(
+        _zip(tmp_path / "b.zip", FILES, date=(2024, 5, 5, 5, 5, 6)), name="tp"
+    )
     assert one["id"] == two["id"]
     assert one["bundle"]["sha256"] != two["bundle"]["sha256"]
 
@@ -65,3 +67,11 @@ def test_a_rebuilt_bundle_keeps_created_but_refreshes_its_hash(tmp_path):
     main([str(bundle), "-o", str(out), "--name", "tp", "--source", "def"])
     third = json.loads(out.read_text())
     assert third["id"] != first["id"] and third["source"] == "def"
+
+
+def test_a_release_names_the_room_environment_when_there_is_one(tmp_path):
+    bundle = _zip(tmp_path / "tp.zip", FILES)
+    assert "shared_env" not in describe(bundle, name="tp")
+    out = tmp_path / "release.json"
+    main([str(bundle), "-o", str(out), "--name", "tp", "--shared-env", "/room/env"])
+    assert json.loads(out.read_text())["shared_env"] == "/room/env"

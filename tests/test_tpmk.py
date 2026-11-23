@@ -888,3 +888,175 @@ def test_an_env_only_bundle_is_no_release(tmp_path):
     _make(course, "bundle")
     assert (course / "student" / "tp.zip").is_file()
     assert not (course / "student" / "release.json").exists()
+
+
+# --------------------------------------------------------------------------
+# shared-env: the student environment of a teaching room
+# --------------------------------------------------------------------------
+
+SHARED_ENV = (
+    "SHARED_ENV_HOST=room",
+    "SHARED_ENV_ROOT=envs/course",
+    "SHARED_ENV_CACHE=cache/course",
+    "SHARED_ENV_UV=9.9.9",
+)
+
+
+def test_shared_env_copies_the_release_and_runs_the_script_there(tmp_path):
+    course = _course(tmp_path, names=("tp1",))
+    out = _make(course, "-n", "shared-env", *SHARED_ENV).stdout
+    lines = [" ".join(ln.split()) for ln in out.replace("\\\n", "").splitlines()]
+    copy, script_copy = [ln for ln in lines if ln.startswith("rsync ")]
+    assert script_copy.endswith("room:'envs/course/incoming/current/'")
+    assert "shared_env.sh" in script_copy
+    assert copy.endswith("room:'envs/course/incoming/current/'")
+    assert "pyproject.toml" in copy and "uv.lock" in copy
+    (script,) = [ln for ln in lines if "bash -l" in ln]
+    assert (
+        "\"'envs/course'\" \"'current'\" \"'3.12'\" \"'cache/course'\" \"'9.9.9'\" \"'3'\""
+        in script
+    )
+    assert "'envs/course/incoming/current/shared_env.sh'" in script
+
+
+def test_shared_env_takes_the_resources_along(tmp_path):
+    course = _course(tmp_path, names=("tp1",))
+    (course / "res.py").write_text("RESOURCES = {}\n")
+    out = _make(
+        course, "-n", "shared-env", *SHARED_ENV, "SHARED_ENV_RESOURCES=res.py"
+    ).stdout
+    assert "rsync -t res.py room:'envs/course/incoming/current/resources.py'" in out
+
+
+def test_shared_env_dev_switches_the_dev_link(tmp_path):
+    course = _course(tmp_path, names=("tp1",))
+    out = _make(course, "-n", "shared-env-dev", *SHARED_ENV).stdout.replace("\\\n", "")
+    assert "envs/course/incoming/current-dev/" in out
+    assert "\"'envs/course'\" \"'current-dev'\"" in out
+
+
+def test_no_shared_env_without_a_host(tmp_path):
+    course = _course(tmp_path, names=("tp1",))
+    assert _make(course, "-n", "shared-env", check=False).returncode != 0
+    assert "shared-env" not in _make(course, "help").stdout
+
+
+def _gnu() -> bool:
+    try:
+        version = subprocess.run(["mv", "--version"], capture_output=True, text=True)
+    except OSError:
+        return False
+    return "GNU" in version.stdout and shutil.which("sha256sum") is not None
+
+
+FAKE_UV = """#!/bin/sh
+# Enough of uv for shared_env.sh: a real venv, a fake cs_lab in it.
+case "$1" in
+--version) echo "uv 9.9.9" ;;
+sync)
+    "{python}" -m venv --without-pip "$UV_PROJECT_ENVIRONMENT"
+    site=$("$UV_PROJECT_ENVIRONMENT/bin/python" -c \\
+        'import sysconfig; print(sysconfig.get_paths()["purelib"])')
+    echo "" > "$site/cs_lab.py"
+    printf '#!/bin/sh\\necho "$CS_LAB_CACHE_PATH $*" >> "%s/downloads"\\n' \\
+        "$UV_PROJECT_ENVIRONMENT" > "$UV_PROJECT_ENVIRONMENT/bin/cs-lab"
+    chmod +x "$UV_PROJECT_ENVIRONMENT/bin/cs-lab"
+    echo "$@" > "$UV_PROJECT_ENVIRONMENT/sync-args" ;;
+export) shift; while [ "$1" != "-o" ]; do shift; done; echo "numpy==2" > "$2" ;;
+esac
+"""
+
+
+def _shared_env(root, lock, cache="cache", keep="3", link="current"):
+    incoming = root / "incoming" / link
+    incoming.mkdir(parents=True, exist_ok=True)
+    (incoming / "pyproject.toml").write_text("[project]\n")
+    (incoming / "uv.lock").write_text(lock)
+    (incoming / "resources.py").write_text("RESOURCES = {}\n")
+    script = os.path.join(ROOT, "jupytext_notebook_helper", "shared_env.sh")
+    return subprocess.run(
+        ["bash", script, str(root), link, "3.12", cache, "9.9.9", keep],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "HOME": str(root.parent)},
+    )
+
+
+@pytest.mark.skipif(not _gnu(), reason="shared_env.sh is for GNU/Linux")
+def test_shared_env_script(tmp_path):
+    root = tmp_path / "envs"
+    (root / "bin").mkdir(parents=True)
+    (root / "bin" / "uv").write_text(FAKE_UV.format(python=sys.executable))
+    (root / "bin" / "uv").chmod(0o755)
+
+    proc = _shared_env(root, "lock 1")
+    assert proc.returncode == 0, proc.stderr
+    env = (root / "current").resolve()
+    assert len(env.name) == 16
+    assert (env / "uv.lock").read_text() == "lock 1"
+    assert (env / "constraints.txt").read_text() == "numpy==2\n"
+    assert "--frozen" in (env / "sync-args").read_text()
+    cache = tmp_path / "cache"
+    assert (env / "downloads").read_text().startswith(f"{cache} cache download")
+    # Whoever runs the environment's Python reads the course cache.
+    out = subprocess.run(
+        [
+            env / "bin" / "python",
+            "-c",
+            "import os; print(os.environ['CS_LAB_CACHE_PATH'])",
+        ],
+        capture_output=True,
+        text=True,
+        env={k: v for k, v in os.environ.items() if k != "CS_LAB_CACHE_PATH"},
+    )
+    assert out.stdout.strip() == str(cache)
+
+    # The same lock again: nothing rebuilt.
+    (env / "sync-args").unlink()
+    assert _shared_env(root, "lock 1").returncode == 0
+    assert not (env / "sync-args").exists()
+
+    # New locks: the link moves, and only KEEP old ones stay.
+    for n in (2, 3):
+        assert _shared_env(root, f"lock {n}", keep="1").returncode == 0
+    envs = sorted(p.name for p in root.iterdir() if len(p.name) == 16)
+    assert len(envs) == 2  # current, and one more
+    assert (root / "current").resolve().name in envs
+    assert (root / "current").resolve() / "uv.lock"
+    assert ((root / "current").resolve() / "uv.lock").read_text() == "lock 3"
+
+
+@pytest.mark.skipif(shutil.which("zip") is None, reason="zip is not available")
+def test_the_release_names_the_room_environment(tmp_path):
+    import json
+
+    course = _course(
+        tmp_path,
+        names=("tp1",),
+        makefile_head=RELEASE_MAKEFILE
+        + "SHARED_ENV_HOST := room\nSHARED_ENV_ROOT := /envs/course\n",
+    )
+    _make(course, "bundle")
+    release = json.loads((course / "student" / "release.json").read_text())
+    assert release["shared_env"] == "/envs/course/current"
+
+    # Another path: release.json follows, though the zip did not change.
+    _age(course / "student" / "release.json")  # make compares to the second
+    _make(course, "bundle", "SHARED_ENV_ROOT=/elsewhere")
+    release = json.loads((course / "student" / "release.json").read_text())
+    assert release["shared_env"] == "/elsewhere/current"
+
+
+@pytest.mark.skipif(shutil.which("zip") is None, reason="zip is not available")
+def test_a_relative_room_root_is_not_published(tmp_path):
+    import json
+
+    course = _course(
+        tmp_path,
+        names=("tp1",),
+        makefile_head=RELEASE_MAKEFILE
+        + "SHARED_ENV_HOST := room\nSHARED_ENV_ROOT := envs/course\n",
+    )
+    _make(course, "bundle")
+    release = json.loads((course / "student" / "release.json").read_text())
+    assert "shared_env" not in release

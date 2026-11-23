@@ -66,6 +66,7 @@ def describe(
     bundle_url: Optional[str] = None,
     source: Optional[str] = None,
     created: Optional[str] = None,
+    shared_env: Optional[str] = None,
 ) -> dict:
     """The release.json content for ``bundle`` (a zip)."""
     files = _files(bundle)
@@ -86,6 +87,10 @@ def describe(
         release["source"] = source
     if "uv.lock" in files:
         release["lock"] = files["uv.lock"]
+    if shared_env:
+        # A teaching room's environment for this release: `cs-lab course
+        # init` uses it on a machine where this path exists.
+        release["shared_env"] = shared_env
     return release
 
 
@@ -99,6 +104,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="where the zip is, relative to release.json (default: its file name)",
     )
     parser.add_argument("--source", help="the source commit (informative)")
+    parser.add_argument(
+        "--shared-env",
+        help="absolute path of a teaching room's environment for this release",
+    )
     args = parser.parse_args(argv)
 
     previous = None
@@ -120,6 +129,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         bundle_url=args.bundle_url,
         source=(previous or {}).get("source") if created else args.source,
         created=created,
+        shared_env=args.shared_env,
     )
 
     content = json.dumps(release, indent=2, ensure_ascii=False) + "\n"

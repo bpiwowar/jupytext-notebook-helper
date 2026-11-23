@@ -69,6 +69,10 @@
 # automatically (before the first code cell) for the .colab variants; an empty
 # `pip`-tagged cell is only needed to place it somewhere else.
 
+# This file's directory, for the scripts that come with it (read before any
+# include changes MAKEFILE_LIST).
+TP_MK_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
+
 # ---- configurable variables (override before the include) ----
 SOURCES_DIR    ?= sources
 # The course order of the practicals, as source names separated by blanks:
@@ -450,7 +454,8 @@ ifneq ($(strip $(RELEASE_JSON)),)
 $(RELEASE_JSON): $(ZIP)
 	@$(PYTHON) python -m jupytext_notebook_helper.release $< --output $@ \
 		--name "$(RELEASE_NAME)" --bundle-url "$(call under_destdir,$(ZIP))" \
-		$(if $(RELEASE_SOURCE_REV),--source "$(RELEASE_SOURCE_REV)")
+		$(if $(RELEASE_SOURCE_REV),--source "$(RELEASE_SOURCE_REV)") \
+		$(if $(strip $(RELEASE_SHARED_ENV)),--shared-env "$(strip $(RELEASE_SHARED_ENV))")
 
 student: $(if $(PUBLISHED_NAMES),$(RELEASE_JSON))
 bundle: $(RELEASE_JSON)
@@ -838,6 +843,66 @@ rsync-data:
 		$(STUDENT_DATA_DIR)/ $(SSH_STUDENT_DATA):$(SSH_STUDENT_DATA_PATH)
 endif
 
+# ---- shared-env: one student environment for a teaching room --------------
+# Only defined when the course sets SHARED_ENV_HOST and SHARED_ENV_ROOT. On a
+# machine whose home is the same on every room machine (an NFS home, readable
+# by the students), it builds the student environment from the release's
+# uv.lock, downloads the resources the notebooks load into SHARED_ENV_CACHE,
+# and switches SHARED_ENV_ROOT/current (current-dev for the dev site) to it —
+# see shared_env.sh. Students then point `cs-lab course init --shared-env` at
+# that link instead of installing their own: one copy for the whole room.
+# The script runs in a login shell, for the proxy settings a profile may hold,
+# and detached there: if the connection drops, the build goes on, and running
+# this again follows it to the end (see shared_env.sh).
+# ssh hands the remote shell one string: hence the arguments quoted twice (an
+# empty one would vanish otherwise).
+# Run it before `rsync` hands the release out, so that the release a student
+# gets never asks for an environment the room does not have yet.
+SHARED_ENV_HOST      ?=
+#: On SHARED_ENV_HOST: relative to the home directory, or absolute.
+SHARED_ENV_ROOT      ?=
+SHARED_ENV_PYTHON    ?= 3.12
+#: CS_LAB_CACHE_PATH on SHARED_ENV_HOST (same rule); empty: no download.
+SHARED_ENV_CACHE     ?=
+SHARED_ENV_RESOURCES ?= $(RESOURCES_PY)
+#: How many environments to keep besides those current and current-dev use.
+SHARED_ENV_KEEP      ?= 3
+SHARED_ENV_LINK      ?= $(if $(DEV_BUILD),current-dev,current)
+#: The uv building it: the version that wrote the lock, by default.
+SHARED_ENV_UV         = $(word 2,$(shell uv --version))
+#: What release.json says of it, for `cs-lab course init` to use it where it
+#: exists: the environment's absolute path (so only for an absolute
+#: SHARED_ENV_ROOT, the home directory there being unknown here).
+RELEASE_SHARED_ENV   ?= $(if $(filter /%,$(SHARED_ENV_ROOT)),$(SHARED_ENV_ROOT)/$(SHARED_ENV_LINK))
+
+# release.json is rewritten when that path changes, not only the zip.
+ifneq ($(strip $(RELEASE_JSON)),)
+RELEASE_SHARED_ENV_STAMP := $(DEPDIR)/release-shared-env
+_shared_env_stamp := $(shell mkdir -p $(DEPDIR) && \
+	{ [ "$$(cat $(RELEASE_SHARED_ENV_STAMP) 2>/dev/null)" = "$(strip $(RELEASE_SHARED_ENV))" ] || \
+	  echo "$(strip $(RELEASE_SHARED_ENV))" > $(RELEASE_SHARED_ENV_STAMP); })
+$(RELEASE_JSON): $(RELEASE_SHARED_ENV_STAMP)
+$(RELEASE_SHARED_ENV_STAMP): ;
+endif
+
+ifneq ($(and $(strip $(SHARED_ENV_HOST)),$(strip $(SHARED_ENV_ROOT))),)
+SHARED_ENV_INCOMING = $(SHARED_ENV_ROOT)/incoming/$(SHARED_ENV_LINK)
+
+.PHONY: shared-env shared-env-dev
+shared-env: $(BUNDLE_PYPROJECT) $(BUNDLE_LOCK) $(SHARED_ENV_RESOURCES)
+	@echo "=== Shared environment on $(SHARED_ENV_HOST): $(SHARED_ENV_ROOT)/$(SHARED_ENV_LINK) ==="
+	ssh $(SHARED_ENV_HOST) mkdir -p "'$(SHARED_ENV_INCOMING)'"
+	rsync -t $(BUNDLE_PYPROJECT) $(BUNDLE_LOCK) $(SHARED_ENV_HOST):'$(SHARED_ENV_INCOMING)/'
+	$(if $(strip $(SHARED_ENV_RESOURCES)),rsync -t $(SHARED_ENV_RESOURCES) $(SHARED_ENV_HOST):'$(SHARED_ENV_INCOMING)/resources.py')
+	rsync -t $(TP_MK_DIR)shared_env.sh $(SHARED_ENV_HOST):'$(SHARED_ENV_INCOMING)/'
+	ssh -o ServerAliveInterval=30 $(SHARED_ENV_HOST) bash -l "'$(SHARED_ENV_INCOMING)/shared_env.sh'" \
+		"'$(SHARED_ENV_ROOT)'" "'$(SHARED_ENV_LINK)'" "'$(SHARED_ENV_PYTHON)'" \
+		"'$(SHARED_ENV_CACHE)'" "'$(SHARED_ENV_UV)'" "'$(SHARED_ENV_KEEP)'"
+
+shared-env-dev:
+	+$(DEV_MAKE) shared-env
+endif
+
 # ---- publish-git: the student tree in a public git repository -------------
 # Only defined when the course sets GIT_PUBLISH_URL. Two things a directory of
 # .ipynb files served over HTTPS cannot do: be opened in Google Colab — which
@@ -1173,6 +1238,13 @@ define HELP_RSYNC_DATA
   rsync-data       deploy $(STUDENT_DATA_DIR)/ to $(SSH_STUDENT_DATA)
 endef
 
+define HELP_SHARED_ENV
+  shared-env       the student environment of the release, built on
+                   $(SHARED_ENV_HOST):$(SHARED_ENV_ROOT)/current, with the
+                   resources in $(or $(SHARED_ENV_CACHE),(no SHARED_ENV_CACHE: none))
+  shared-env-dev   the same for the dev site: .../current-dev
+endef
+
 define HELP_PUBLISH_GIT
   publish-git      mirror $(DESTDIR_TP)/ into a clone of $(GIT_PUBLISH_URL)
                    ($(GIT_PUBLISH_DIR)) and commit — it never pushes
@@ -1254,12 +1326,13 @@ Run the teacher notebooks (execute them, keep the result)
 Edit
   lab              JupyterLab on the teacher notebooks (built first)
   lab-test         same, at profile $(LAB_PROFILE): reduced datasets and training,
-                   figures still shown$(if $(or $(SSH_HOST),$(SSH_STUDENT_DATA),$(GIT_PUBLISH_URL)),
+                   figures still shown$(if $(or $(SSH_HOST),$(SSH_STUDENT_DATA),$(SHARED_ENV_HOST),$(GIT_PUBLISH_URL)),
 
 Deploy)$(if $(SSH_HOST),
 $(HELP_RSYNC))$(if $(and $(SSH_HOST),$(SSH_PATH_DEV)),
 $(HELP_RSYNC_DEV))$(if $(SSH_STUDENT_DATA),
-$(HELP_RSYNC_DATA))$(if $(GIT_PUBLISH_URL),
+$(HELP_RSYNC_DATA))$(if $(and $(SHARED_ENV_HOST),$(SHARED_ENV_ROOT)),
+$(HELP_SHARED_ENV))$(if $(GIT_PUBLISH_URL),
 $(HELP_PUBLISH_GIT))
 endef
 export HELP_TEXT
