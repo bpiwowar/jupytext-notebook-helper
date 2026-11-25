@@ -832,6 +832,7 @@ RSYNC_ARGS := $(foreach i,$(RSYNC_SOLUTION_PATTERNS),$(if $(SOLUTIONS_RELEASED),
 ifneq ($(strip $(SSH_HOST)),)
 .PHONY: rsync
 $(RSYNC_DATA_LINK):
+	@mkdir -p $(@D)
 	ln -sf $(RSYNC_DATA) $@
 
 rsync: student $(if $(SOLUTIONS_RELEASED),solution) $(RSYNC_DATA_LINK) $(RSYNC_INDEX)
