@@ -747,7 +747,19 @@ RESOURCES_PY ?=
 RESOURCES_MODULE ?= $(subst /,.,$(patsubst $(SRC_ROOT)/%,%,$(basename $(RESOURCES_PY))))
 CS_LAB ?= $(PYTHON) cs-lab
 
+#: The revisions the resources are pinned at (`make resources-lock`), next to
+#: the declaration; used by shared-env when it exists.
+RESOURCES_LOCK ?= $(if $(strip $(RESOURCES_PY)),$(basename $(RESOURCES_PY)).lock)
+
 ifneq ($(strip $(RESOURCES_PY)),)
+# resources-lock: pin each declared Hub resource at a commit hash (the Hub is
+# asked, for new or changed entries only). UPGRADE=all re-resolves everything,
+# UPGRADE="models/gpt2 datasets/org-d" those entries.
+.PHONY: resources-lock
+resources-lock:
+	$(CS_LAB) cache lock --from $(RESOURCES_PY) -o $(RESOURCES_LOCK) \
+		$(if $(filter all,$(UPGRADE)),--upgrade,$(if $(UPGRADE),--upgrade $(UPGRADE)))
+
 .PHONY: check-resources
 check-resources:
 	@$(CS_LAB) cache check $(SOURCES_DIR) --search-path $(SRC_ROOT) \
@@ -874,6 +886,10 @@ SHARED_ENV_PYTHON    ?= 3.12
 #: CS_LAB_CACHE_PATH on SHARED_ENV_HOST (same rule); empty: no download.
 SHARED_ENV_CACHE     ?=
 SHARED_ENV_RESOURCES ?= $(RESOURCES_PY)
+#: The resource lock sent along (none when the file does not exist).
+SHARED_ENV_RESOURCES_LOCK ?= $(wildcard $(RESOURCES_LOCK))
+#: Its name in the cache (`cs-lab cache usage`): one per course and site.
+SHARED_ENV_REGISTER  ?= $(RELEASE_NAME)-$(SHARED_ENV_LINK)
 #: How many environments to keep besides those current and current-dev use.
 SHARED_ENV_KEEP      ?= 3
 SHARED_ENV_LINK      ?= $(if $(DEV_BUILD),current-dev,current)
@@ -911,7 +927,8 @@ rsync -t $(TP_MK_DIR)shared_env.sh $(SHARED_ENV_HOST):'$(SHARED_ENV_INCOMING)/'
 ssh -o ServerAliveInterval=30 $(SHARED_ENV_HOST) env SHARED_ENV_ACTION=$(1) \
 	bash -lc "'exec bash \"\$$0\" \"\$$@\"'" "'$(SHARED_ENV_INCOMING)/shared_env.sh'" \
 	"'$(SHARED_ENV_ROOT)'" "'$(SHARED_ENV_LINK)'" "'$(SHARED_ENV_PYTHON)'" \
-	"'$(SHARED_ENV_CACHE)'" "'$(SHARED_ENV_UV)'" "'$(SHARED_ENV_KEEP)'"
+	"'$(SHARED_ENV_CACHE)'" "'$(SHARED_ENV_UV)'" "'$(SHARED_ENV_KEEP)'" \
+	"'$(SHARED_ENV_REGISTER)'"
 endef
 
 # Looking after it: what is there, the running build, what a killed one left.
@@ -936,7 +953,8 @@ shared-env:
 	@echo "=== Shared environment on $(SHARED_ENV_HOST): not synced (SHARED_ENV_SYNC=no) ==="
 else
 _shared_env_settings := $(SHARED_ENV_HOST) $(SHARED_ENV_ROOT) $(SHARED_ENV_LINK) \
-	$(SHARED_ENV_PYTHON) $(SHARED_ENV_CACHE) $(SHARED_ENV_UV) $(SHARED_ENV_KEEP)
+	$(SHARED_ENV_PYTHON) $(SHARED_ENV_CACHE) $(SHARED_ENV_UV) $(SHARED_ENV_KEEP) \
+	$(SHARED_ENV_REGISTER)
 _shared_env_stamp := $(shell mkdir -p $(DEPDIR) && \
 	{ [ "$$(cat $(SHARED_ENV_SETTINGS_STAMP) 2>/dev/null)" = "$(strip $(_shared_env_settings))" ] || \
 	  echo "$(strip $(_shared_env_settings))" > $(SHARED_ENV_SETTINGS_STAMP); })
@@ -948,12 +966,14 @@ shared-env: $(SHARED_ENV_DONE)
 	@echo "=== Shared environment on $(SHARED_ENV_HOST): $(SHARED_ENV_ROOT)/$(SHARED_ENV_LINK) in sync$(if $(filter auto,$(SHARED_ENV_SYNC)), (SHARED_ENV_SYNC=yes to sync anyway)) ==="
 
 $(SHARED_ENV_DONE): $(BUNDLE_PYPROJECT) $(BUNDLE_LOCK) $(SHARED_ENV_RESOURCES) \
+		$(SHARED_ENV_RESOURCES_LOCK) \
 		$(TP_MK_DIR)shared_env.sh $(SHARED_ENV_SETTINGS_STAMP) \
 		$(if $(filter yes,$(SHARED_ENV_SYNC)),_shared_env_force)
 	@echo "=== Shared environment on $(SHARED_ENV_HOST): $(SHARED_ENV_ROOT)/$(SHARED_ENV_LINK) ==="
 	ssh $(SHARED_ENV_HOST) mkdir -p "'$(SHARED_ENV_INCOMING)'"
 	rsync -t $(BUNDLE_PYPROJECT) $(BUNDLE_LOCK) $(SHARED_ENV_HOST):'$(SHARED_ENV_INCOMING)/'
 	$(if $(strip $(SHARED_ENV_RESOURCES)),rsync -t $(SHARED_ENV_RESOURCES) $(SHARED_ENV_HOST):'$(SHARED_ENV_INCOMING)/resources.py')
+	$(if $(strip $(SHARED_ENV_RESOURCES_LOCK)),rsync -t $(SHARED_ENV_RESOURCES_LOCK) $(SHARED_ENV_HOST):'$(SHARED_ENV_INCOMING)/resources.lock',ssh $(SHARED_ENV_HOST) rm -f "'$(SHARED_ENV_INCOMING)/resources.lock'")
 	$(call shared_env_run,build)
 	@mkdir -p $(@D) && touch $@
 endif
@@ -1275,6 +1295,8 @@ define HELP_RESOURCES
                    $(SOURCES_DIR)/ (cs-lab cache check), then import it for real
                    and build every resource. Run by 'check'. A skeleton for a
                    new notebook: cs-lab cache scan $(SOURCES_DIR) --emit <section>
+  resources-lock   pin the resources at commit hashes in $(RESOURCES_LOCK)
+                   (new entries only; UPGRADE=all, or UPGRADE="models/<id> ...")
 endef
 
 define HELP_ORDER
@@ -1300,7 +1322,9 @@ endef
 define HELP_SHARED_ENV
   shared-env       the student environment of the release, built on
                    $(SHARED_ENV_HOST):$(SHARED_ENV_ROOT)/current, with the
-                   resources in $(or $(SHARED_ENV_CACHE),(no SHARED_ENV_CACHE: none))
+                   resources in $(or $(SHARED_ENV_CACHE),(no SHARED_ENV_CACHE: none)),
+                   at the revisions of $(or $(SHARED_ENV_RESOURCES_LOCK),(no resource lock): main's)
+                   (lock registered there as $(SHARED_ENV_REGISTER))
   shared-env-dev   the same for the dev site: .../current-dev
                    (only when something changed since the last sync:
                    SHARED_ENV_SYNC=yes to sync anyway, =no to skip it)

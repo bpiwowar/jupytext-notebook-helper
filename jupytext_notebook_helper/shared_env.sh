@@ -1,33 +1,38 @@
 #!/usr/bin/env bash
 # A shared student environment on a remote machine, built from the release's
 # uv.lock — run there by `make shared-env` (tp.mk), which first copies the
-# release's pyproject.toml, uv.lock and resources.py, and this script, to
-# $ROOT/incoming/$LINK/, then runs it there with `ssh HOST bash -l ...`.
+# release's pyproject.toml, uv.lock, resources.py and resources.lock, and this
+# script, to $ROOT/incoming/$LINK/, then runs it there with `ssh HOST bash -l ...`.
 #
 #   ROOT/
 #     bin/uv              uv, at the version the course's lock was written with
 #     python/             the Pythons uv installs (one per minor version)
 #     cache/              uv's cache: environments hardlink into it, so two
 #                         builds share every package they have in common
-#     <hash>/             one environment (a venv) per lock and Python version,
-#                         plus the lock it was built from (uv.lock, which
-#                         `cs-lab course` checks) and constraints.txt (for a
-#                         student's own overlay)
+#     <hash>/             one environment (a venv) per lock, Python version
+#                         and resource lock, plus the lock it was built from
+#                         (uv.lock, which `cs-lab course` checks),
+#                         constraints.txt (for a student's own overlay) and
+#                         resources.lock (the revisions its notebooks read)
 #     current, current-dev   the environment of each site, switched atomically
 #     incoming/<link>/    what `make shared-env` sends, and the build's log
 #
 # What an environment holds depends on its lock and its Python version only
-# (`uv sync --frozen --no-install-project`: not on pyproject.toml), and its
-# name is their hash: the same lock is built once, whichever site asks for it.
-# What does not change the packages — the cache it points to, the resources
-# to download — is redone on every run instead.
+# (`uv sync --frozen --no-install-project`: not on pyproject.toml); its name is
+# their hash, and the resource lock's: the same locks are built once, whichever
+# site asks for them (a new resource lock alone makes a new environment, cheap:
+# uv hardlinks it from its cache). What does not change the packages — the
+# cache it points to, the resources to download — is redone on every run.
 #
-# Each environment sets CS_LAB_CACHE_PATH (and IR_DATASETS_HOME) for whoever
-# runs its Python, unless already set: a .pth file in its site-packages.
+# Each environment sets CS_LAB_CACHE_PATH (and IR_DATASETS_HOME), and
+# CS_LAB_CACHE_LOCK to its resources.lock, for whoever runs its Python, unless
+# already set: a .pth file in its site-packages. The download registers the
+# lock in the cache as REGISTER, for `cs-lab cache usage` / `gc` there.
 #
 # Arguments: ROOT (relative to $HOME, or absolute) LINK PYTHON CACHE UV_VERSION
-# KEEP. CACHE (CS_LAB_CACHE_PATH there, relative to $HOME or absolute) may be
-# empty: then nothing is downloaded. Everything is made readable by all.
+# KEEP REGISTER. CACHE (CS_LAB_CACHE_PATH there, relative to $HOME or absolute)
+# may be empty: then nothing is downloaded. REGISTER (the lock's name in the
+# cache) defaults to LINK. Everything is made readable by all.
 #
 # Robustness:
 # - the build runs detached, holding a lock, its output in build.log: a
@@ -61,6 +66,7 @@ PYTHON=$3
 CACHE=${4:+$(absolute "$4")}
 UV_VERSION=$5
 KEEP=${6:-3}
+REGISTER=${7:-$LINK}
 
 INCOMING=$ROOT/incoming/$LINK
 LOG=$INCOMING/build.log
@@ -235,6 +241,7 @@ rm -rf "$WORK"
 mkdir -p "$WORK"
 cp "$INCOMING/pyproject.toml" "$INCOMING/uv.lock" "$WORK/"
 [ -f "$INCOMING/resources.py" ] && cp "$INCOMING/resources.py" "$WORK/"
+[ -f "$INCOMING/resources.lock" ] && cp "$INCOMING/resources.lock" "$WORK/"
 
 # ---- uv, the version the lock was written with --------------------------
 UV=$ROOT/bin/uv
@@ -254,7 +261,16 @@ export UV_HTTP_TIMEOUT=${UV_HTTP_TIMEOUT:-300}
 export UV_CONCURRENT_DOWNLOADS=${UV_CONCURRENT_DOWNLOADS:-4}
 
 # ---- the environment of this lock and Python ----------------------------
-HASH=$({ cat "$WORK/uv.lock"; echo "python=$PYTHON"; } | sha256sum | cut -c1-16)
+HASH=$({
+    cat "$WORK/uv.lock"
+    echo "python=$PYTHON"
+    # Only when there is one: environments from before resource locks keep
+    # their names.
+    if [ -f "$WORK/resources.lock" ]; then
+        echo "resources.lock="
+        cat "$WORK/resources.lock"
+    fi
+} | sha256sum | cut -c1-16)
 exec 8>"$ROOT/.$HASH.lock"
 flock 8 # another site may be building the same environment
 ENV=$ROOT/$HASH # from here on, the failure handler may remove it
@@ -266,6 +282,7 @@ else
     (cd "$WORK" && UV_PROJECT_ENVIRONMENT=$ENV \
         "$UV" sync --frozen --no-install-project --python "$PYTHON" 8>&- 9>&-)
     cp "$WORK/pyproject.toml" "$WORK/uv.lock" "$ENV/"
+    [ -f "$WORK/resources.lock" ] && cp "$WORK/resources.lock" "$ENV/"
     (cd "$WORK" && "$UV" export --frozen --no-hashes --no-header \
         --no-emit-project -o "$ENV/constraints.txt" >/dev/null 8>&- 9>&-)
     "$ENV/bin/python" -c 'import cs_lab' 8>&- 9>&- \
@@ -277,7 +294,14 @@ fi
 SITE=$("$ENV/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])' 8>&- 9>&-)
 PTH=$SITE/zz_course_cache.pth
 if [ -n "$CACHE" ]; then
-    echo "import os; os.environ.setdefault('CS_LAB_CACHE_PATH', '$CACHE'); os.environ.setdefault('IR_DATASETS_HOME', '$CACHE/ir_datasets')" > "$PTH.tmp"
+    {
+        printf "import os; os.environ.setdefault('CS_LAB_CACHE_PATH', '%s'); " "$CACHE"
+        printf "os.environ.setdefault('IR_DATASETS_HOME', '%s/ir_datasets')" "$CACHE"
+        if [ -f "$ENV/resources.lock" ]; then
+            printf "; os.environ.setdefault('CS_LAB_CACHE_LOCK', '%s/resources.lock')" "$ENV"
+        fi
+        echo
+    } > "$PTH.tmp"
     mv "$PTH.tmp" "$PTH"
 else
     rm -f "$PTH"
@@ -291,8 +315,18 @@ missing=""
 if [ -n "$CACHE" ] && [ -f "$WORK/resources.py" ]; then
     say "downloading the resources into $CACHE"
     mkdir -p "$CACHE"
+    locked=()
+    if [ -f "$DONE_ENV/resources.lock" ]; then
+        # cs-lab knows locks since `cache usage` exists
+        if "$DONE_ENV/bin/cs-lab" cache usage --help >/dev/null 2>&1; then
+            locked=(--lock "$DONE_ENV/resources.lock" --register "$REGISTER")
+        else
+            say "WARNING: this cs-lab ignores resources.lock (too old): main's revisions"
+        fi
+    fi
     if ! CS_LAB_CACHE_PATH=$CACHE IR_DATASETS_HOME=$CACHE/ir_datasets \
-        "$DONE_ENV/bin/cs-lab" cache download --from "$WORK/resources.py" --keep-going 9>&-; then
+        "$DONE_ENV/bin/cs-lab" cache download --from "$WORK/resources.py" \
+        ${locked[@]+"${locked[@]}"} --keep-going 9>&-; then
         missing=yes
     fi
 fi
