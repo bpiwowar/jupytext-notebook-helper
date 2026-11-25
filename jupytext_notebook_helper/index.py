@@ -20,6 +20,12 @@ and rsync does not re-upload.
 ``--intro`` inserts an HTML fragment under the title (the practical's own
 words: what the course is, which Python, where to ask for help). It is
 inserted verbatim: it is the course's own file, not user input.
+
+``--groups`` lists the practicals under headings — the course's lectures —
+instead of one table: the JSON ``outline --groups`` reads (one ``{title,
+names}`` per group, a name being a source name or ``{id, optional: true}``).
+An optional practical is marked as one; a practical no group names comes last,
+under "Other practicals".
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from .manifest import write_text_if_changed
+from .outline import Group, read_groups
 
 # What each archive of `bundles` is called when the course says nothing. The
 # ids come from tp.mk (`student`, and `solution` once released).
@@ -104,6 +111,16 @@ td.num { color: var(--muted); font-variant-numeric: tabular-nums; white-space: n
 td.name { font-weight: 600; }
 td.desc { color: var(--muted); }
 td.links { white-space: nowrap; }
+h3 { font-size: 1rem; margin: 2rem 0 .5rem; font-weight: 600; }
+.optional {
+  margin-left: .5rem;
+  padding: .05rem .45rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: .75rem;
+  font-weight: 400;
+}
 .link {
   display: inline-block;
   margin: .1rem .25rem .1rem 0;
@@ -212,8 +229,41 @@ def render_bundles(
     )
 
 
+def render_groups(
+    practicals: list[dict[str, Any]],
+    base_url: str,
+    numbered: bool,
+    groups: list[Group],
+) -> str:
+    """The practicals under the heading of the group naming each, in the
+    groups' order; those no group names last. Groups with none are left out."""
+    by_id = {str(p.get("id", "")): p for p in practicals}
+    grouped = {name for group in groups for name in group.names}
+    rest = [str(p.get("id", "")) for p in practicals]
+    rest = [name for name in rest if name not in grouped]
+    parts = ["  <h2>Practicals</h2>"]
+    for group in groups + ([Group("Other practicals", rest, set())] if rest else []):
+        members = [by_id[name] for name in group.names if name in by_id]
+        if not members:
+            continue
+        parts.append(f"  <h3>{escape(group.title)}</h3>")
+        parts.append(render_table(members, base_url, numbered, optional=group.optional))
+    return "\n".join(parts) + "\n"
+
+
 def render_practicals(
     practicals: list[dict[str, Any]], base_url: str, numbered: bool
+) -> str:
+    return (
+        "  <h2>Practicals</h2>\n" + render_table(practicals, base_url, numbered) + "\n"
+    )
+
+
+def render_table(
+    practicals: list[dict[str, Any]],
+    base_url: str,
+    numbered: bool,
+    optional: set[str] | frozenset[str] = frozenset(),
 ) -> str:
     has_description = any(p.get("description") for p in practicals)
     numbers = {
@@ -236,7 +286,14 @@ def render_practicals(
         if numbered:
             number = numbers[str(practical.get("id", ""))]
             cells.append(f'<td class="num">{escape(number)}</td>')
-        cells.append(f'<td class="name">{escape(str(practical.get("name", "")))}</td>')
+        badge = (
+            ' <span class="optional">optional</span>'
+            if str(practical.get("id", "")) in optional
+            else ""
+        )
+        cells.append(
+            f'<td class="name">{escape(str(practical.get("name", "")))}{badge}</td>'
+        )
         if has_description:
             description = str(practical.get("description") or "")
             cells.append(f'<td class="desc desc-col">{escape(description)}</td>')
@@ -252,11 +309,10 @@ def render_practicals(
         rows.append("    <tr>" + "".join(cells) + "</tr>")
 
     return (
-        "  <h2>Practicals</h2>\n"
         "  <table>\n"
         "    <thead>\n" + "".join(head) + "\n    </thead>\n"
         "    <tbody>\n" + "\n".join(rows) + "\n    </tbody>\n"
-        "  </table>\n"
+        "  </table>"
     )
 
 
@@ -270,6 +326,7 @@ def render(
     bundle_labels: dict[str, str] | None = None,
     root: Path | None = None,
     numbered: bool = True,
+    groups: list[Group] | None = None,
 ) -> str:
     base_url = str(manifest.get("baseUrl") or "")
     overrides = bundle_labels or {}
@@ -281,11 +338,12 @@ def render(
             list(manifest.get("bundles") or []), base_url, overrides, root
         ).rstrip()
     )
-    body.append(
-        render_practicals(
-            list(manifest.get("practicals") or []), base_url, numbered
-        ).rstrip()
-    )
+    practicals = list(manifest.get("practicals") or [])
+    if groups:
+        listing = render_groups(practicals, base_url, numbered, groups)
+    else:
+        listing = render_practicals(practicals, base_url, numbered)
+    body.append(listing.rstrip())
     if footer:
         body.append(f"  <footer>{escape(footer)}</footer>")
     return (
@@ -328,6 +386,11 @@ def main(argv: list[str] | None = None) -> int:
         help="how an archive of the manifest is named on the page (repeatable)",
     )
     parser.add_argument(
+        "--groups",
+        type=Path,
+        help="JSON of headings to list the practicals under (as `outline --groups`)",
+    )
+    parser.add_argument(
         "--no-numbers",
         action="store_true",
         help="leave out the column holding the number each file name starts with",
@@ -347,6 +410,8 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"index: no manifest at {args.manifest}")
         manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
 
+    if args.groups and not args.groups.is_file():
+        raise SystemExit(f"index: no groups file at {args.groups}")
     intro = ""
     if args.intro:
         if not args.intro.is_file():
@@ -362,6 +427,7 @@ def main(argv: list[str] | None = None) -> int:
         bundle_labels=dict(parse_label(value) for value in args.bundle_label),
         root=args.root if args.root is not None else args.output.parent,
         numbered=not args.no_numbers,
+        groups=read_groups(args.groups) if args.groups else None,
     )
     changed = write_text_if_changed(args.output, page)
     count = len(manifest.get("practicals") or [])

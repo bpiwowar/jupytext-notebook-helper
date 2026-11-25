@@ -159,6 +159,9 @@ INDEX_INTRO           ?=
 # A line at the bottom of the page, and the page's language tag.
 INDEX_FOOTER          ?=
 INDEX_LANG            ?= en
+# Headings to list the practicals under (the course's lectures), as the JSON
+# OUTLINE_GROUPS is; empty: one table. Optional practicals are marked.
+INDEX_GROUPS          ?=
 # How the archives are named on the page. Empty keeps the index's own wording
 # ("Notebooks and environment" / "Solutions").
 INDEX_STUDENT_LABEL   ?=
@@ -1241,7 +1244,8 @@ index: $(INDEX_HTML)
 # introduction does, or when an archive does (its size is on the page). The
 # page itself is only rewritten when its bytes change, so an unchanged course
 # leaves the file — and everything keyed off its timestamp — alone.
-$(INDEX_HTML): $(PY_NOTEBOOKS) $(EXERCISE_SOURCES) $(INDEX_INTRO) $(INDEX_ZIPS)
+$(INDEX_HTML): $(PY_NOTEBOOKS) $(EXERCISE_SOURCES) $(INDEX_INTRO) $(INDEX_ZIPS) \
+		$(INDEX_GROUPS)
 	@test -n "$(INDEX_TITLE)" || { \
 		echo "ERROR: INDEX_TITLE is not set — name the page, e.g."; \
 		echo "       INDEX_TITLE := Reinforcement learning — practicals"; \
@@ -1253,6 +1257,7 @@ $(INDEX_HTML): $(PY_NOTEBOOKS) $(EXERCISE_SOURCES) $(INDEX_INTRO) $(INDEX_ZIPS)
 		--manifest $(INDEX_MANIFEST) --output $@ \
 		--title "$(INDEX_TITLE)" --lang "$(INDEX_LANG)" \
 		$(if $(INDEX_INTRO),--intro "$(INDEX_INTRO)") \
+		$(if $(INDEX_GROUPS),--groups "$(INDEX_GROUPS)") \
 		$(if $(INDEX_FOOTER),--footer "$(INDEX_FOOTER)") \
 		$(INDEX_LABEL_ARGS)
 

@@ -233,3 +233,69 @@ def test_unnumbered_sources_get_no_number_column():
     )
     page = render(manifest)
     assert '<th scope="col">#</th>' not in page
+
+
+def _grouped_manifest():
+    return {
+        "baseUrl": "",
+        "practicals": [
+            {"id": name, "name": name.capitalize(), "files": []}
+            for name in ("alpha", "beta", "gamma", "delta")
+        ],
+    }
+
+
+def test_groups_put_the_practicals_under_their_headings():
+    from jupytext_notebook_helper.outline import Group
+
+    groups = [
+        Group("Lecture 1", ["beta", "alpha"], set()),
+        Group("Lecture 2", ["gamma", "missing"], {"gamma"}),
+        Group("Lecture 3", ["missing"], set()),
+    ]
+    page = index.render(_grouped_manifest(), title="T", groups=groups)
+    order = [
+        page.index(text)
+        for text in (
+            "<h3>Lecture 1</h3>",
+            ">Beta<",
+            ">Alpha<",
+            "<h3>Lecture 2</h3>",
+            ">Gamma",
+            "<h3>Other practicals</h3>",
+            ">Delta<",
+        )
+    ]
+    assert order == sorted(order)
+    assert "Lecture 3" not in page  # no practical of its own here
+    assert page.count('class="optional"') == 1
+    assert 'Gamma <span class="optional">optional</span>' in page
+
+
+def test_main_reads_the_groups(tmp_path):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps(_grouped_manifest()))
+    groups = tmp_path / "groups.json"
+    groups.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Lecture 1",
+                    "names": ["alpha", {"id": "beta", "optional": True}],
+                }
+            ]
+        )
+    )
+    output = tmp_path / "index.html"
+    argv = [
+        "--manifest",
+        str(manifest),
+        "--output",
+        str(output),
+        "--groups",
+        str(groups),
+    ]
+    assert index.main(argv) == 0
+    page = output.read_text()
+    assert "<h3>Lecture 1</h3>" in page and "Other practicals" in page
+    assert 'Beta <span class="optional">optional</span>' in page
