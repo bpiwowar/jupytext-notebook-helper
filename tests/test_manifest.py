@@ -387,3 +387,19 @@ def test_exercise_solution_follows_the_practical_selection(tmp_path):
     )
     files = result["practicals"][0]["files"]
     assert [f["label"] for f in files if f.get("exercises")] == ["Exercises (PDF)"]
+
+
+def test_build_leaves_the_excluded_sources_out(tmp_path):
+    for name in ("a", "b", "c"):
+        write(tmp_path, f"{name}.py", "# %%\n")
+    built = manifest.build(
+        sources_dir=tmp_path,
+        local_subdir="local",
+        colab_subdir="colab",
+        local_label="Notebook",
+        colab_label="Colab",
+        name_key="practical_name",
+        url="../lab/",
+        exclude="a c",
+    )
+    assert [p["id"] for p in built["practicals"]] == ["b"]

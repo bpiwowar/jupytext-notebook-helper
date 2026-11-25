@@ -299,3 +299,9 @@ def test_main_reads_the_groups(tmp_path):
     page = output.read_text()
     assert "<h3>Lecture 1</h3>" in page and "Other practicals" in page
     assert 'Beta <span class="optional">optional</span>' in page
+
+
+def test_a_course_with_no_practical_out_says_so():
+    page = index.render({"baseUrl": "", "practicals": []}, title="T")
+    assert "None has been published yet." in page
+    assert "<table>" not in page

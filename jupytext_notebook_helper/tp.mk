@@ -252,8 +252,24 @@ SOLUTION_NAMES  := $(patsubst S:%,%,$(filter S:%,$(SELECTION)))
 # DEV, held back unless this is the development build.
 ifeq ($(strip $(DEV_BUILD)),)
 PUBLISHED_NAMES := $(filter-out $(DEV),$(PUBLISHED_NAMES))
+
 SOLUTION_NAMES  := $(filter-out $(DEV),$(SOLUTION_NAMES))
 endif
+
+#: Deletes from the student tree the notebooks no longer handed out (marked
+#: dev or `publish: no` since they were built): `rsync` and `stage` send the
+#: whole tree, which would otherwise publish them again.
+define prune_unpublished
+@for dir in $(DESTDIR_TP)/$(LOCAL_SUBDIR) $(DESTDIR_TP)/$(COLAB_SUBDIR); do \
+	[ -d "$$dir" ] || continue; \
+	for nb in "$$dir"/*.ipynb; do \
+		[ -e "$$nb" ] || continue; \
+		name=$$(basename "$$nb" .ipynb); \
+		case " $(PUBLISHED_NAMES) " in *" $$name "*) ;; \
+		*) echo "not handed out any more: $$nb"; rm -f "$$nb" ;; esac; \
+	done; \
+done
+endef
 HELD_BACK_NAMES := $(filter-out $(PUBLISHED_NAMES),$(NAMES))
 # `yes` when at least one corrigé is released: what used to be
 # PUBLISH_SOLUTIONS alone now also depends on what the headers say.
@@ -819,6 +835,7 @@ $(RSYNC_DATA_LINK):
 	ln -sf $(RSYNC_DATA) $@
 
 rsync: student $(if $(SOLUTIONS_RELEASED),solution) $(RSYNC_DATA_LINK) $(RSYNC_INDEX)
+	$(prune_unpublished)
 	@echo "=== Synchronizing student notebooks$(if $(SOLUTIONS_RELEASED), and solutions) on $(SSH_HOST) ==="
 	@ssh $(SSH_HOST) mkdir -p $(SSH_PATH)
 	rsync --copy-unsafe-links -azv $(RSYNC_ARGS) --exclude "*" --delete-excluded \
@@ -830,6 +847,7 @@ endif
 STAGE_DIR ?=
 .PHONY: stage
 stage: student $(if $(SOLUTIONS_RELEASED),solution) $(RSYNC_DATA_LINK) $(RSYNC_INDEX)
+	$(prune_unpublished)
 	@test -n "$(STAGE_DIR)" || { \
 		echo "ERROR: STAGE_DIR is not set — name the directory, e.g."; \
 		echo "       make stage STAGE_DIR=site/practical"; \
@@ -1206,6 +1224,7 @@ MANIFEST_EXERCISES_ARGS = --exercises-dir "$(EXERCISES_DIR)" \
 # base URL of its own reader; `index` (below) writes the same list for a reader
 # sitting in $(DESTDIR_TP) itself, so it adds nothing.
 MANIFEST_COMMON_ARGS = --sources $(SOURCES_DIR) $(ORDER_ARGS) --local-subdir "$(LOCAL_SUBDIR)" \
+	$(if $(strip $(HELD_BACK_NAMES)),--exclude "$(strip $(HELD_BACK_NAMES))") \
 	--colab-subdir "$(COLAB_SUBDIR)" --name-key "$(MANIFEST_NAME_KEY)" \
 	--description-key "$(MANIFEST_DESCRIPTION_KEY)" \
 	--local-label "$(MANIFEST_LOCAL_LABEL)" \

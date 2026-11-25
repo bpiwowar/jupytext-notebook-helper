@@ -212,6 +212,7 @@ def build(
     solutions_default: bool = True,
     colab_url_prefix: str | None = None,
     order: str | list[str] | None = None,
+    exclude: str | list[str] | None = None,
     exercises_dir: Path | None = None,
     exercises_subdir: str = "exercises",
     exercises_label: str = "Exercises (PDF)",
@@ -221,9 +222,12 @@ def build(
     # corrigé goes with it (see :mod:`jupytext_notebook_helper.selection`). A
     # practical held back is absent from the manifest altogether: what is not
     # announced is exactly what `rsync` does not deploy.
+    # `exclude`: held back by the build itself (tp.mk's DEV, outside the
+    # development build), whatever the headers say.
+    excluded = set(exclude.split() if isinstance(exclude, str) else exclude or ())
     practicals = []
     for source in selection.sources(sources_dir, order):
-        if not selection.is_published(source):
+        if not selection.is_published(source) or source.stem in excluded:
             continue
         stem = source.stem
         files: list[dict[str, Any]] = [
@@ -323,6 +327,12 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="the course order, as source names separated by blanks "
         "(default: file name order)",
+    )
+    parser.add_argument(
+        "--exclude",
+        default="",
+        help="source names held back (blank-separated): left out like a "
+        "`publish: no` header",
     )
     parser.add_argument(
         "--local-subdir",
@@ -425,6 +435,7 @@ def main(argv: list[str] | None = None) -> int:
     manifest = build(
         sources_dir=args.sources,
         order=args.order,
+        exclude=args.exclude,
         local_subdir=args.local_subdir.strip("/"),
         colab_subdir=args.colab_subdir,
         local_label=args.local_label,

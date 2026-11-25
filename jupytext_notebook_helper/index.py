@@ -339,7 +339,12 @@ def render(
         ).rstrip()
     )
     practicals = list(manifest.get("practicals") or [])
-    if groups:
+    if not practicals:
+        listing = (
+            "  <h2>Practicals</h2>\n"
+            '  <p class="intro">None has been published yet.</p>\n'
+        )
+    elif groups:
         listing = render_groups(practicals, base_url, numbered, groups)
     else:
         listing = render_practicals(practicals, base_url, numbered)
