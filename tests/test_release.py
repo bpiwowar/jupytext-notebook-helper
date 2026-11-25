@@ -4,6 +4,8 @@ import json
 import time
 import zipfile
 
+import pytest
+
 from jupytext_notebook_helper.release import describe, main
 
 
@@ -75,3 +77,48 @@ def test_a_release_names_the_room_environment_when_there_is_one(tmp_path):
     out = tmp_path / "release.json"
     main([str(bundle), "-o", str(out), "--name", "tp", "--shared-env", "/room/env"])
     assert json.loads(out.read_text())["shared_env"] == "/room/env"
+
+
+def test_a_release_names_the_room_cache_when_there_is_one(tmp_path):
+    bundle = _zip(tmp_path / "tp.zip", FILES)
+    assert "shared_cache" not in describe(bundle, name="tp")
+    out = tmp_path / "release.json"
+    argv = [str(bundle), "-o", str(out), "--name", "tp"]
+    main([*argv, "--shared-cache", "/room/cache"])
+    assert json.loads(out.read_text())["shared_cache"] == "/room/cache"
+
+
+def test_rooms_are_listed_in_order_the_first_one_also_on_top(tmp_path):
+    bundle = _zip(tmp_path / "tp.zip", FILES)
+    out = tmp_path / "release.json"
+    argv = [str(bundle), "-o", str(out), "--name", "tp"]
+    main(
+        [
+            *argv,
+            "--shared-env",
+            "/ppti/env",
+            "--shared-cache",
+            "/ppti/cache",
+            "--room-name",
+            "ppti",
+            "--room",
+            "lab||/lab/cache",
+        ]
+    )
+    release = json.loads(out.read_text())
+    assert release["rooms"] == [
+        {"name": "ppti", "shared_env": "/ppti/env", "shared_cache": "/ppti/cache"},
+        {"name": "lab", "shared_cache": "/lab/cache"},
+    ]
+    assert (release["shared_env"], release["shared_cache"]) == (
+        "/ppti/env",
+        "/ppti/cache",
+    )
+
+
+@pytest.mark.parametrize("value", ["lab", "lab||", "|/e|", "lab|env|"])
+def test_a_malformed_room_is_refused(value):
+    from jupytext_notebook_helper.release import parse_room
+
+    with pytest.raises(SystemExit):
+        parse_room(value)

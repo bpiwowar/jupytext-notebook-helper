@@ -458,7 +458,10 @@ $(RELEASE_JSON): $(ZIP)
 	@$(PYTHON) python -m jupytext_notebook_helper.release $< --output $@ \
 		--name "$(RELEASE_NAME)" --bundle-url "$(call under_destdir,$(ZIP))" \
 		$(if $(RELEASE_SOURCE_REV),--source "$(RELEASE_SOURCE_REV)") \
-		$(if $(strip $(RELEASE_SHARED_ENV)),--shared-env "$(strip $(RELEASE_SHARED_ENV))")
+		$(if $(strip $(RELEASE_SHARED_ENV)),--shared-env "$(strip $(RELEASE_SHARED_ENV))") \
+		$(if $(strip $(RELEASE_SHARED_CACHE)),--shared-cache "$(strip $(RELEASE_SHARED_CACHE))") \
+		$(if $(strip $(SHARED_ENV_ROOM)),--room-name "$(strip $(SHARED_ENV_ROOM))") \
+		$(foreach room,$(RELEASE_ROOMS),--room "$(room)")
 
 student: $(if $(PUBLISHED_NAMES),$(RELEASE_JSON))
 bundle: $(RELEASE_JSON)
@@ -902,13 +905,24 @@ SHARED_ENV_UV         = $(word 2,$(shell uv --version))
 #: exists: the environment's absolute path (so only for an absolute
 #: SHARED_ENV_ROOT, the home directory there being unknown here).
 RELEASE_SHARED_ENV   ?= $(if $(filter /%,$(SHARED_ENV_ROOT)),$(SHARED_ENV_ROOT)/$(SHARED_ENV_LINK))
+#: And of its model cache (same rule): a folder with its own environment in
+#: that room still reads the models from it.
+RELEASE_SHARED_CACHE ?= $(if $(filter /%,$(SHARED_ENV_CACHE)),$(SHARED_ENV_CACHE))
+#: That room's name in release.json (a folder set up there follows it).
+SHARED_ENV_ROOM      ?=
+#: Other rooms, after it: `name|env|cache` words, absolute paths, either one
+#: empty — another set of machines whose environment / cache exist by other
+#: means (or `make shared-env` with SHARED_ENV_HOST & co overridden).
+RELEASE_ROOMS        ?=
 
-# release.json is rewritten when that path changes, not only the zip.
+# release.json is rewritten when those paths change, not only the zip.
 ifneq ($(strip $(RELEASE_JSON)),)
 RELEASE_SHARED_ENV_STAMP := $(DEPDIR)/release-shared-env
+_release_shared := $(strip $(RELEASE_SHARED_ENV)) $(strip $(RELEASE_SHARED_CACHE)) \
+	$(strip $(SHARED_ENV_ROOM)) $(strip $(RELEASE_ROOMS))
 _shared_env_stamp := $(shell mkdir -p $(DEPDIR) && \
-	{ [ "$$(cat $(RELEASE_SHARED_ENV_STAMP) 2>/dev/null)" = "$(strip $(RELEASE_SHARED_ENV))" ] || \
-	  echo "$(strip $(RELEASE_SHARED_ENV))" > $(RELEASE_SHARED_ENV_STAMP); })
+	{ [ "$$(cat $(RELEASE_SHARED_ENV_STAMP) 2>/dev/null)" = "$(strip $(_release_shared))" ] || \
+	  echo "$(strip $(_release_shared))" > $(RELEASE_SHARED_ENV_STAMP); })
 $(RELEASE_JSON): $(RELEASE_SHARED_ENV_STAMP)
 $(RELEASE_SHARED_ENV_STAMP): ;
 endif

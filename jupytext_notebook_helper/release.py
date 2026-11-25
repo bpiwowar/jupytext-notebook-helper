@@ -15,6 +15,13 @@ Paths are the ones inside the zip (``notebooks/<name>.ipynb``,
 ``env`` names the files that make up the environment: the updater merges them
 instead of treating them as content, and leaves them alone when the student
 uses a shared environment.
+
+``rooms`` lists the sets of machines (teaching rooms) where the course
+installed a shared environment and/or a model cache: ``{name, shared_env,
+shared_cache}``, absolute paths, in order of preference — ``cs-lab course
+init`` uses the first whose paths exist on the machine. The first room is
+also written as the top-level ``shared_env`` / ``shared_cache``, which is all
+cs-lab before 2.2 reads.
 """
 
 from __future__ import annotations
@@ -67,8 +74,14 @@ def describe(
     source: Optional[str] = None,
     created: Optional[str] = None,
     shared_env: Optional[str] = None,
+    shared_cache: Optional[str] = None,
+    room: str = "",
+    rooms: Sequence[dict] = (),
 ) -> dict:
-    """The release.json content for ``bundle`` (a zip)."""
+    """The release.json content for ``bundle`` (a zip).
+
+    ``shared_env`` / ``shared_cache`` are the room the course builds (named
+    ``room``); ``rooms`` more of them (dicts as in ``rooms``)."""
     files = _files(bundle)
     release = {
         "format": FORMAT,
@@ -87,11 +100,34 @@ def describe(
         release["source"] = source
     if "uv.lock" in files:
         release["lock"] = files["uv.lock"]
-    if shared_env:
-        # A teaching room's environment for this release: `cs-lab course
-        # init` uses it on a machine where this path exists.
-        release["shared_env"] = shared_env
+    first = {"name": room, "shared_env": shared_env, "shared_cache": shared_cache}
+    listed = [
+        {key: value for key, value in entry.items() if value}
+        for entry in ([first] if shared_env or shared_cache else []) + list(rooms)
+    ]
+    listed = [
+        entry for entry in listed if "shared_env" in entry or "shared_cache" in entry
+    ]
+    if listed:
+        # What older cs-lab reads: the first room.
+        for key in ("shared_env", "shared_cache"):
+            if key in listed[0]:
+                release[key] = listed[0][key]
+        release["rooms"] = listed
     return release
+
+
+def parse_room(value: str) -> dict:
+    """``name|env|cache`` (either path may be empty) -> a room."""
+    parts = value.split("|")
+    if len(parts) != 3 or not parts[0] or not (parts[1] or parts[2]):
+        raise SystemExit(
+            f"release: --room expects name|shared_env|shared_cache, got {value!r}"
+        )
+    for path in parts[1:]:
+        if path and not path.startswith("/"):
+            raise SystemExit(f"release: a room's paths are absolute, not {path!r}")
+    return {"name": parts[0], "shared_env": parts[1], "shared_cache": parts[2]}
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -107,6 +143,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--shared-env",
         help="absolute path of a teaching room's environment for this release",
+    )
+    parser.add_argument(
+        "--shared-cache",
+        help="absolute path of that room's cs-lab cache (CS_LAB_CACHE_PATH)",
+    )
+    parser.add_argument("--room-name", default="", help="that room's name")
+    parser.add_argument(
+        "--room",
+        action="append",
+        default=[],
+        metavar="NAME|ENV|CACHE",
+        help="another room (either path may be empty; repeatable)",
     )
     args = parser.parse_args(argv)
 
@@ -130,6 +178,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         source=(previous or {}).get("source") if created else args.source,
         created=created,
         shared_env=args.shared_env,
+        shared_cache=args.shared_cache,
+        room=args.room_name,
+        rooms=[parse_room(value) for value in args.room],
     )
 
     content = json.dumps(release, indent=2, ensure_ascii=False) + "\n"
