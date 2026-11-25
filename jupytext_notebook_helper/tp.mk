@@ -901,12 +901,15 @@ ifeq ($(filter $(SHARED_ENV_SYNC),auto yes no),)
 $(error SHARED_ENV_SYNC is auto, yes or no, not '$(SHARED_ENV_SYNC)')
 endif
 
-#: Runs shared_env.sh there (a fresh copy of it) with SHARED_ENV_ACTION=$(1).
+#: Runs shared_env.sh there (a fresh copy of it) with SHARED_ENV_ACTION=$(1):
+#: a login shell, for the profile (a proxy), which then gives way to the
+#: script — exits through it would run ~/.bash_logout, whose last status
+#: (Debian's, without clear_console: 1) would replace the script's.
 define shared_env_run
 ssh $(SHARED_ENV_HOST) mkdir -p "'$(SHARED_ENV_INCOMING)'"
 rsync -t $(TP_MK_DIR)shared_env.sh $(SHARED_ENV_HOST):'$(SHARED_ENV_INCOMING)/'
 ssh -o ServerAliveInterval=30 $(SHARED_ENV_HOST) env SHARED_ENV_ACTION=$(1) \
-	bash -l "'$(SHARED_ENV_INCOMING)/shared_env.sh'" \
+	bash -lc "'exec bash \"\$$0\" \"\$$@\"'" "'$(SHARED_ENV_INCOMING)/shared_env.sh'" \
 	"'$(SHARED_ENV_ROOT)'" "'$(SHARED_ENV_LINK)'" "'$(SHARED_ENV_PYTHON)'" \
 	"'$(SHARED_ENV_CACHE)'" "'$(SHARED_ENV_UV)'" "'$(SHARED_ENV_KEEP)'"
 endef
