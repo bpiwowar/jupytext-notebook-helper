@@ -114,6 +114,12 @@ def test_rooms_are_listed_in_order_the_first_one_also_on_top(tmp_path):
         "/ppti/env",
         "/ppti/cache",
     )
+    assert release["format"] == 2
+
+
+def test_a_release_without_rooms_keeps_format_1(tmp_path):
+    bundle = _zip(tmp_path / "tp.zip", FILES)
+    assert describe(bundle, name="tp")["format"] == 1
 
 
 @pytest.mark.parametrize("value", ["lab", "lab||", "|/e|", "lab|env|"])

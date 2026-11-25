@@ -37,6 +37,10 @@ from typing import Dict, Optional, Sequence
 
 #: Bumped when the layout of release.json changes incompatibly.
 FORMAT = 1
+#: The format of a release with `rooms`: cs-lab before 2.2 would read only
+#: the first room (the top-level copy), and miss its cache with an own
+#: environment — it refuses a newer format instead (`uvx cs-lab@latest`).
+FORMAT_ROOMS = 2
 
 #: The files that make up the environment, when the bundle has them.
 ENV_FILES = ("pyproject.toml", "uv.lock")
@@ -114,6 +118,7 @@ def describe(
             if key in listed[0]:
                 release[key] = listed[0][key]
         release["rooms"] = listed
+        release["format"] = FORMAT_ROOMS
     return release
 
 
