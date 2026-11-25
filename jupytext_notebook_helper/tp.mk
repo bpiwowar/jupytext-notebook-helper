@@ -454,7 +454,8 @@ RELEASE_NAME ?= $(STUDENT_ENV_NAME)
 RELEASE_SOURCE_REV = $(shell git describe --always --dirty 2>/dev/null)
 
 ifneq ($(strip $(RELEASE_JSON)),)
-$(RELEASE_JSON): $(ZIP)
+# Also on release.py: a new version of it may describe the same zip anew.
+$(RELEASE_JSON): $(ZIP) $(TP_MK_DIR)release.py
 	@$(PYTHON) python -m jupytext_notebook_helper.release $< --output $@ \
 		--name "$(RELEASE_NAME)" --bundle-url "$(call under_destdir,$(ZIP))" \
 		$(if $(RELEASE_SOURCE_REV),--source "$(RELEASE_SOURCE_REV)") \
